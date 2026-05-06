@@ -104,7 +104,7 @@ CREATE TABLE extraction_meta (
     updated_at TEXT NOT NULL
 );
 -- Stored keys: schema_version, last_full_extraction, source_db_path,
---              globird_start_date (NULL until cutover)
+--              globird_start_date ('2026-05-05')
 ```
 
 ## Column computation
@@ -132,13 +132,13 @@ SoC and temperature values are stored as **REAL** with 1 decimal place of precis
 
 ## Provider period logic
 
-| Provider  | Date range (inclusive, by row date) | Notes                                                   |
-| --------- | ----------------------------------- | ------------------------------------------------------- |
-| `ea`      | start of data → 2025-08-15          | Energy Australia                                        |
-| `amber`   | 2025-08-16 → globird_start − 1      | Amber Energy (variable wholesale pricing)               |
-| `globird` | globird_start → present             | Free 11am–2pm window (TBD; stored in `extraction_meta`) |
+| Provider  | Date range (inclusive, by row date) | Notes                                     |
+| --------- | ----------------------------------- | ----------------------------------------- |
+| `ea`      | start of data → 2025-08-15          | Energy Australia                          |
+| `amber`   | 2025-08-16 → 2026-05-04             | Amber Energy (variable wholesale pricing) |
+| `globird` | 2026-05-05 → present                | GloBird (free 11am–2pm window)            |
 
-`globird_start_date` is NULL in `extraction_meta` until the user cuts over. Until then, all rows from 2025-08-16 onward are `amber`.
+`globird_start_date` is set to `2026-05-05` in `extraction_meta`. Rows on or after that date have provider `globird`; rows from 2025-08-16 to 2026-05-04 are `amber`; earlier rows are `ea`.
 
 ## Special period flags
 
