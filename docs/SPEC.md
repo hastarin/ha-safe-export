@@ -31,7 +31,7 @@ The 11am endpoint is chosen deliberately: it is the start of the GloBird free-po
 
 The prediction can be decomposed (we are not committing to this structure for Phase 2 — it's just the cleanest mental model):
 
-```
+```text
 SoC_at_11am_tomorrow ≈ SoC_now
                      + (predicted_solar_in_window / battery_capacity)
                      − (predicted_consumption_in_window / battery_capacity)
@@ -41,7 +41,7 @@ SoC_at_11am_tomorrow ≈ SoC_now
 
 Solving for the maximum `E_export` that satisfies the safety constraint:
 
-```
+```text
 E_export_max ≈ (SoC_now − SoC_safety_threshold) × battery_capacity
               + predicted_solar
               − predicted_consumption
@@ -99,8 +99,8 @@ The hospital period (Sep 28 – Nov 3 2025) is excluded from training and from t
 
 | Phase                                           | Deliverable                                                                                                                                                                                                              | Status            |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
-| **Phase 1** — Standalone Python data extraction | `src/extract.py` builds the dataset SQLite DB; tests reproduce three known-good fixtures exactly                                                                                                                         | **Current phase** |
-| **Phase 2** — Modelling                         | Train a model (or stack of models) that produces the prediction objective above. Evaluate against success criteria on a held-out time slice. Output: a trained model file + a `predict()` function                       | After Phase 1     |
+| **Phase 1** — Standalone Python data extraction | `src/extract.py` builds the dataset SQLite DB; tests reproduce three known-good fixtures exactly                                                                                                                         | **Complete**      |
+| **Phase 2** — Modelling                         | Train a model (or stack of models) that produces the prediction objective above. Evaluate against success criteria on a held-out time slice. Output: a trained model file + a `predict()` function                       | **Current phase** |
 | **Phase 3** — Home Assistant integration        | Package as a HACS-compatible custom integration. Auto-discovers required sensors (or asks during config). Provides the export-limit sensor and a service to query predictions. Re-extracts daily, retrains periodically. | After Phase 2     |
 
 Each phase produces artifacts the next phase consumes — the dataset is the contract between Phase 1 and Phase 2; the trained model + `predict()` is the contract between Phase 2 and Phase 3.

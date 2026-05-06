@@ -8,9 +8,9 @@ The home setup: BYD Battery-Box Premium HV (13.8 kWh, 10% reserve), Fronius sola
 
 ## Current phase
 
-**Phase 1: Standalone Python.** Build `src/extract.py` that reads a Home Assistant SQLite database and produces a derived dataset (also SQLite) with one row per "morning date" covering the 6pm-prior-day → 11am-current-day window.
+**Phase 2: Modelling.** Phase 1 (data extraction) is complete — `src/extract.py` builds the dataset SQLite DB and all three validation fixtures pass. Phase 2 trains a model that produces the safe-export prediction defined in `docs/SPEC.md`.
 
-Phase 2 (model training) and Phase 3 (Home Assistant integration) come later. Phase 1 must produce data and code that survive into those later phases without rework.
+Phase 3 (Home Assistant integration) comes after Phase 2. The dataset DB is the contract between Phase 1 and Phase 2; the trained model + `predict()` function is the contract between Phase 2 and Phase 3.
 
 ## Read these before writing code
 
@@ -36,7 +36,7 @@ It only goes back to July 2024. Use `sensor.solarnet_power_load` instead — sam
 
 Hourly mean-power integration introduces 5–15% noise vs the energy balance. Compute `consumption_wh` as:
 
-```
+```text
 consumption_wh = solar_wh + grid_import_wh + battery_discharged_wh
                − grid_export_wh − battery_charged_wh
 ```
@@ -69,8 +69,8 @@ A passing run of `pytest` is the bar for any change to extraction logic.
 
 ## Repository structure
 
-```
-ha-battery-export-predictor/
+```text
+ha-safe-export/
 ├── CLAUDE.md
 ├── README.md
 ├── docs/
@@ -78,7 +78,7 @@ ha-battery-export-predictor/
 │   ├── DATASET.md
 │   └── DECISIONS.md
 ├── src/
-│   ├── __init__.py
+│   ├── __init__.py      # defines __version__
 │   ├── extract.py       # build/refresh the dataset DB
 │   ├── schema.sql       # canonical DDL for the dataset DB
 │   └── windows.py       # timezone-aware window math
@@ -93,6 +93,7 @@ ha-battery-export-predictor/
 ## Incremental behaviour
 
 The extract script must be incremental:
+
 1. On startup, ensure the dataset DB exists (create from `schema.sql` if not).
 2. Read `MAX(date) FROM daily_observations`. Default to `2023-11-28` (first complete window after commissioning) if empty.
 3. Compute and `INSERT OR REPLACE` rows from `MAX(date) + 1` through yesterday (today's window is incomplete).
@@ -103,6 +104,7 @@ Provide a `--rebuild` flag that drops and re-extracts all rows. Useful when meth
 ## When in doubt, ask
 
 Don't make these changes without discussion:
+
 - Modifying the schema of `daily_observations`
 - Switching to a different source sensor
 - Changing how a column is computed
