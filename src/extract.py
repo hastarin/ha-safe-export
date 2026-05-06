@@ -1,0 +1,355 @@
+"""Extract daily observations from the Home Assistant database."""
+
+import argparse
+import logging
+import sqlite3
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+from src import __version__
+from src.windows import windows_for_date
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+log = logging.getLogger(__name__)
+
+FIRST_DATE = date(2023, 11, 28)
+GUESTS_SENSOR_START = date(2026, 3, 8)
+AMBER_START = date(2025, 8, 16)
+GLOBIRD_START = date(2026, 5, 5)
+HOSPITAL_START = date(2025, 9, 28)
+HOSPITAL_END = date(2025, 11, 3)
+IMBALANCE_WARN_THRESHOLD = 3000
+
+_SENSOR_IDS = {
+    "byd_soc": "sensor.byd_battery_box_premium_hv_state_of_charge",
+    "pv": "sensor.solarnet_power_photovoltaics",
+    "load": "sensor.solarnet_power_load",
+    "grid_import": "sensor.smart_meter_63a_1_real_energy_consumed",
+    "grid_export": "sensor.smart_meter_63a_1_real_energy_produced",
+    "battery_charged": "sensor.battery_energy_charged",
+    "battery_discharged": "sensor.battery_energy_discharged",
+    "outdoor_temp": "sensor.netatmo_outdoor_temperature",
+    "indoor_temp": "sensor.netatmo_indoor_temperature",
+    "guests": "sensor.hastguests",
+}
+
+
+def _get_metadata_ids(ha: sqlite3.Connection) -> dict[str, int | None]:
+    """Look up metadata IDs for all sensors. Guests is optional."""
+    ids: dict[str, int | None] = {}
+    for key, sensor_id in _SENSOR_IDS.items():
+        row = ha.execute(
+            "SELECT id FROM statistics_meta WHERE statistic_id = ?", (sensor_id,)
+        ).fetchone()
+        if row is None:
+            if key == "guests":
+                ids[key] = None
+            else:
+                raise ValueError(f"Required sensor not found in HA database: {sensor_id}")
+        else:
+            ids[key] = row[0]
+    return ids
+
+
+def _provider(d: date) -> str:
+    if d >= GLOBIRD_START:
+        return "globird"
+    if d >= AMBER_START:
+        return "amber"
+    return "ea"
+
+
+def _hospital(d: date) -> int:
+    return 1 if HOSPITAL_START <= d <= HOSPITAL_END else 0
+
+
+def _cum_delta(
+    ha: sqlite3.Connection, mid: int, ts_start: int, ts_end: int
+) -> int | None:
+    """Return cumulative-sum delta between two exact bucket timestamps.
+
+    Returns None if either endpoint is missing (data quality issue).
+    """
+    rows = ha.execute(
+        "SELECT start_ts, sum FROM statistics WHERE metadata_id = ? AND start_ts IN (?, ?)",
+        (mid, ts_start, ts_end),
+    ).fetchall()
+    by_ts = {r[0]: r[1] for r in rows}
+    start_val = by_ts.get(ts_start)
+    end_val = by_ts.get(ts_end)
+    if start_val is None or end_val is None:
+        return None
+    return round(end_val - start_val)
+
+
+def extract_row(
+    ha: sqlite3.Connection,
+    ids: dict[str, int | None],
+    morning_date: date,
+) -> dict | None:
+    """Return a dict of column values for one morning_date, or None to skip."""
+    w = windows_for_date(morning_date)
+    date_str = morning_date.isoformat()
+
+    def soc_mean(ts: int) -> float | None:
+        row = ha.execute(
+            "SELECT mean FROM statistics WHERE metadata_id = ? AND start_ts = ?",
+            (ids["byd_soc"], ts),
+        ).fetchone()
+        return round(row[0], 1) if row and row[0] is not None else None
+
+    soc_at_6pm = soc_mean(w.ts_17_prior)
+    soc_at_11am = soc_mean(w.ts_10_today)
+
+    row = ha.execute(
+        "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["byd_soc"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    min_soc_overnight = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts < ?",
+        (ids["byd_soc"], w.ts_06_prior, w.ts_18_prior),
+    ).fetchone()
+    max_soc_prev_daylight = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT SUM(MAX(mean, 0)) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["pv"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    solar_wh = round(row[0]) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT SUM(ABS(mean)) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["load"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    consumption_wh_load = round(row[0]) if row and row[0] is not None else None
+
+    grid_import_wh = _cum_delta(ha, ids["grid_import"], w.ts_18_prior, w.ts_11_today)
+    grid_export_wh = _cum_delta(ha, ids["grid_export"], w.ts_18_prior, w.ts_11_today)
+    battery_charged_wh = _cum_delta(ha, ids["battery_charged"], w.ts_18_prior, w.ts_11_today)
+    battery_discharged_wh = _cum_delta(ha, ids["battery_discharged"], w.ts_18_prior, w.ts_11_today)
+
+    required = {
+        "grid_import_wh": grid_import_wh,
+        "grid_export_wh": grid_export_wh,
+        "battery_charged_wh": battery_charged_wh,
+        "battery_discharged_wh": battery_discharged_wh,
+        "solar_wh_before_11am": solar_wh,
+    }
+    missing = [k for k, v in required.items() if v is None]
+    if missing:
+        log.warning("Skipping %s — missing data for: %s", date_str, ", ".join(missing))
+        return None
+
+    consumption_wh = solar_wh + grid_import_wh + battery_discharged_wh - grid_export_wh - battery_charged_wh
+
+    row = ha.execute(
+        "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["outdoor_temp"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    min_outdoor_temp = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["indoor_temp"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    avg_indoor_temp = round(row[0], 1) if row and row[0] is not None else None
+
+    guests: int | None = None
+    if morning_date >= GUESTS_SENSOR_START and ids["guests"] is not None:
+        row = ha.execute(
+            "SELECT MAX(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+            (ids["guests"], w.ts_18_prior, w.ts_10_today),
+        ).fetchone()
+        max_guests = row[0] if row and row[0] is not None else None
+        guests = 1 if (max_guests is not None and max_guests > 0.5) else 0
+
+    curtailment_likely = 1 if (max_soc_prev_daylight is not None and max_soc_prev_daylight >= 99) else 0
+
+    if consumption_wh_load is not None:
+        imbalance = consumption_wh_load - consumption_wh
+        if abs(imbalance) > IMBALANCE_WARN_THRESHOLD:
+            log.warning(
+                "Large energy imbalance for %s: %+d Wh (load=%d, balance=%d)",
+                date_str,
+                imbalance,
+                consumption_wh_load,
+                consumption_wh,
+            )
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+    return {
+        "date": date_str,
+        "provider": _provider(morning_date),
+        "guests": guests,
+        "hospital_period": _hospital(morning_date),
+        "soc_at_6pm": soc_at_6pm,
+        "min_soc_overnight": min_soc_overnight,
+        "max_soc_prev_daylight": max_soc_prev_daylight,
+        "soc_at_11am": soc_at_11am,
+        "min_outdoor_temp": min_outdoor_temp,
+        "avg_indoor_temp": avg_indoor_temp,
+        "solar_wh_before_11am": solar_wh,
+        "consumption_wh": consumption_wh,
+        "consumption_wh_load": consumption_wh_load,
+        "grid_import_wh": grid_import_wh,
+        "grid_export_wh": grid_export_wh,
+        "battery_charged_wh": battery_charged_wh,
+        "battery_discharged_wh": battery_discharged_wh,
+        "curtailment_likely": curtailment_likely,
+        "extracted_at": now_utc,
+        "extraction_version": __version__,
+    }
+
+
+def extract_all(
+    ha_db: Path,
+    dataset_db: Path,
+    rebuild: bool = False,
+    from_date: date | None = None,
+) -> None:
+    """Extract all daily observations.
+
+    Args:
+        ha_db: Path to Home Assistant SQLite database (will be opened read-only)
+        dataset_db: Path to output dataset SQLite database
+        rebuild: If True, drop all tables and re-extract from FIRST_DATE
+        from_date: If set, re-extract from this date forward (incremental)
+    """
+    ha = sqlite3.connect(f"file:{ha_db}?mode=ro", uri=True)
+    ds = sqlite3.connect(dataset_db)
+
+    schema_sql = (Path(__file__).parent / "schema.sql").read_text()
+
+    if rebuild:
+        ds.executescript(
+            "DROP TABLE IF EXISTS daily_observations;"
+            "DROP TABLE IF EXISTS extraction_meta;"
+        )
+
+    ds.executescript(schema_sql)
+
+    ids = _get_metadata_ids(ha)
+
+    if from_date is not None:
+        start = from_date
+    elif rebuild:
+        start = FIRST_DATE
+    else:
+        row = ds.execute("SELECT MAX(date) FROM daily_observations").fetchone()
+        max_date_str = row[0] if row and row[0] else None
+        if max_date_str:
+            start = date.fromisoformat(max_date_str) + timedelta(days=1)
+        else:
+            start = FIRST_DATE
+
+    yesterday = date.today() - timedelta(days=1)
+
+    if start > yesterday:
+        log.info("Dataset is up to date through %s — nothing to extract.", yesterday)
+        ha.close()
+        ds.close()
+        return
+
+    log.info("Extracting %s → %s", start, yesterday)
+
+    inserted = replaced = skipped = 0
+    current = start
+    while current <= yesterday:
+        date_str = current.isoformat()
+        row_data = extract_row(ha, ids, current)
+
+        if row_data is None:
+            skipped += 1
+            current += timedelta(days=1)
+            continue
+
+        existing = ds.execute(
+            "SELECT 1 FROM daily_observations WHERE date = ?", (date_str,)
+        ).fetchone()
+
+        ds.execute(
+            """
+            INSERT OR REPLACE INTO daily_observations (
+                date, provider, guests, hospital_period,
+                soc_at_6pm, min_soc_overnight, max_soc_prev_daylight, soc_at_11am,
+                min_outdoor_temp, avg_indoor_temp,
+                solar_wh_before_11am, consumption_wh, consumption_wh_load,
+                grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
+                curtailment_likely, extracted_at, extraction_version
+            ) VALUES (
+                :date, :provider, :guests, :hospital_period,
+                :soc_at_6pm, :min_soc_overnight, :max_soc_prev_daylight, :soc_at_11am,
+                :min_outdoor_temp, :avg_indoor_temp,
+                :solar_wh_before_11am, :consumption_wh, :consumption_wh_load,
+                :grid_import_wh, :grid_export_wh, :battery_charged_wh, :battery_discharged_wh,
+                :curtailment_likely, :extracted_at, :extraction_version
+            )
+            """,
+            row_data,
+        )
+
+        if existing:
+            replaced += 1
+            log.info("Replaced existing row for %s", date_str)
+        else:
+            inserted += 1
+
+        current += timedelta(days=1)
+
+    ds.commit()
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+    for key, value in [
+        ("schema_version", "1.0.0"),
+        ("last_full_extraction", now_utc),
+        ("source_db_path", str(ha_db.resolve())),
+        ("globird_start_date", "2026-05-05"),
+    ]:
+        ds.execute(
+            "INSERT OR REPLACE INTO extraction_meta (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, value, now_utc),
+        )
+    ds.commit()
+
+    log.info("Done — inserted %d, replaced %d, skipped %d", inserted, replaced, skipped)
+
+    ha.close()
+    ds.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Extract daily observations from the Home Assistant database."
+    )
+    parser.add_argument("ha_db", type=Path, help="Path to the Home Assistant SQLite database")
+    parser.add_argument(
+        "--dataset-db",
+        type=Path,
+        default=Path("data/dataset.db"),
+        help="Path to the output dataset SQLite database (default: data/dataset.db)",
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Drop and re-extract all rows",
+    )
+    parser.add_argument(
+        "--from",
+        dest="from_date",
+        type=date.fromisoformat,
+        metavar="YYYY-MM-DD",
+        help="Re-extract from this date forward",
+    )
+    args = parser.parse_args()
+    extract_all(
+        ha_db=args.ha_db,
+        dataset_db=args.dataset_db,
+        rebuild=args.rebuild,
+        from_date=args.from_date,
+    )
+
+
+if __name__ == "__main__":
+    main()

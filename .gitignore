@@ -53,3 +53,6 @@ dmypy.json
 # Environment variables
 .env
 .env.local
+
+# Claude Code
+.claude/
