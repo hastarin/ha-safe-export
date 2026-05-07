@@ -269,16 +269,77 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 
 ---
 
+## Modelling (Phase 2)
+
+### Three-zone linear model for overnight consumption
+
+**Decision:** Use three separate linear regression models keyed by forecast overnight mean temperature (`bom_temp_mean`): Heating (< 19°C), Mild (19–21°C), Cooling (> 21°C). The Mild zone uses an empirical percentile table rather than a regression.
+**Status:** Locked.
+**Date:** 2026-05-07
+
+**Rationale:** A single linear model across all temperatures achieves only R²=0.44 because overnight consumption is U-shaped with temperature — driven by heating below ~15°C and cooling above ~23°C. Splitting by zone allows each model to operate in its linear regime. The Mild zone has R²≈0.03 (temperature explains nothing there) so a percentile table is honest and simpler than a model.
+
+**Coefficients (fitted on chronological 80% split, training set ≤ 2025-11-16):**
+
+- Heating with Solcast: `19.7258 − 0.7756×temp − 0.0703×solcast_kwh` (R²=0.77, n=287)
+- Heating temp-only: `18.8039 − 0.8614×temp` (R²=0.71, n=574, fallback when Solcast unavailable)
+- Cooling with humidity: `−13.4046 + 0.7231×temp + 0.0595×humidity_pct` (R²=0.37, n=49)
+- Cooling temp-only: `−6.756 + 0.660×temp` (fallback when humidity unavailable)
+- Mild empirical: P50=4.60, P75=6.58, P90=7.83, P95=8.43 kWh
+
+**Held-out test performance (date > 2025-11-16, n=169):** MAE=1.75 kWh overall; P95 error buffer (3.56 kWh) covers 92% of test residuals — well-calibrated for the default 90% confidence setting.
+
+**Known weakness:** The cooling zone has only 49 training nights (one summer). R²=0.37 is expected to improve materially once a second summer of data is available.
+
+---
+
+### Solcast full-day forecast as dual-purpose feature
+
+**Decision:** Use `solcast_forecast_tomorrow_wh` (the Solcast full-day PV forecast for tomorrow, read at 6pm) as both a cloud-cover proxy in the consumption model and an implicit morning-solar estimate. No separate solar sub-model is built.
+**Status:** Locked.
+**Date:** 2026-05-07
+
+**Rationale:** Solcast correlates with `solar_wh_before_11am` at r=0.778 (n=522 non-hospital nights), which is stronger than any other available predictor. The full-day forecast averages ~21% of actual pre-11am solar (ratio stable across seasons: 0.19–0.24), so regression coefficients naturally learn the scaling. Building a separate solar sub-model would add complexity without meaningfully improving prediction accuracy at current dataset size.
+
+**Evidence:** Ratio of `solar_wh_before_11am / solcast_forecast_tomorrow_wh` across seasons: summer=0.22, autumn=0.19, winter=0.20, spring=0.24. The consistency confirms that one coefficient handles the conversion adequately.
+
+**Limitation:** Solcast data is only available from 2024-10-17 (559 nights). The model gracefully falls back to the temperature-only variant when `solcast_forecast_tomorrow_wh` is NULL.
+
+---
+
+### Confidence via scaled P95 residual buffer, not a formal quantile model
+
+**Decision:** Uncertainty is expressed as a single-sided buffer scaled from the training-set P95 absolute residual. The scaling to lower confidence levels is linear over the empirical percentile ladder (P50/P75/P90/P95).
+**Status:** Locked.
+**Date:** 2026-05-07
+
+**Rationale:** At 845 nights of data (heating zone: 574, cooling zone: 49), a formal quantile regression or conformal prediction framework would add code complexity without providing meaningfully better calibration than the empirical approach. The P95 buffer already covers 92% of held-out test errors, which is within the ±5pp calibration target in SPEC.md. Revisit when dataset exceeds ~2000 nights or if calibration degrades in live monitoring.
+
+**Alternatives considered:** Quantile regression (deferred: worth revisiting with more data), conformal prediction (deferred: same reasoning), Bayesian posterior over coefficients (rejected: over-engineered for current sample sizes).
+
+---
+
+### `min_soc` as the single discharge floor; no separate safety threshold
+
+**Decision:** `PredictInputs.min_soc` is the battery's configured grid-discharge floor (default 10%). There is no additional "safety threshold" on top. The confidence buffer (P90/P95 error margin) is the sole probabilistic safety mechanism.
+**Status:** Locked.
+**Date:** 2026-05-07
+
+**Rationale:** A separate safety threshold would double-count the uncertainty that the confidence buffer already handles, leaving systematic unexploited headroom on every night. The two concerns are distinct: `min_soc` is an operational hard floor (can be 10% normally, 20–30% in storm mode), while the confidence buffer handles model uncertainty. Conflating them into one parameter produces a model that is simultaneously conservative for the wrong reason and miscalibrated.
+
+**Note:** The battery's hardware absolute floor is ~7% (maintained even during grid outages). `min_soc` controls the grid-connected discharge limit, which is always ≥ 7% in practice. The `predict()` function does not enforce the 7% hardware floor — that is the inverter's responsibility.
+
+---
+
 ## Open / deferred decisions
 
 These are explicitly _not_ settled. They are recorded so that an agent asked to make one of these choices recognises it as a real decision requiring discussion, not a default.
 
-- **Model architecture for Phase 2.** Single end-to-end vs decomposed (separate solar / consumption models). Classical (gradient-boosted) vs sequence model. See SPEC.md § Open questions.
-- **Provider handling.** Separate models per provider, or provider as a feature? The transition from `ea` to `amber` to `globird` represents real tariff-structure differences that may make a single model fragile.
-- **Forecast input quality.** How well does Solcast's forecast match observed PV at our specific site? Quantifying this affects how much of our prediction uncertainty is irreducible.
-- **Confidence interval method.** Quantile regression, conformal prediction, or model-based variance estimation? Any of these can produce the "≥90% confidence" output SPEC.md requires.
-- **Retraining cadence.** Daily, weekly, monthly? Triggered by error spikes or scheduled?
-- **Live deployment safety.** What backstops protect against a model going haywire in production (e.g. reserve-floor hardstop independent of the model)?
+- **Provider handling.** Provider is currently a pass-through input that only affects the reasoning string. Separate models per provider, or provider as a quantitative feature? The transition from `ea` to `amber` to `globird` represents real tariff-structure differences. Deferred until enough GloBird-period data exists to evaluate.
+- **Cooling model improvement.** Only 49 training nights (one summer). Re-evaluate coefficients and consider adding `median_indoor_humidity` once a second full summer is in the dataset (expected: late 2026).
+- **Retraining cadence.** Daily, weekly, monthly? Triggered by error spikes or scheduled? Deferred to Phase 3.
+- **Live deployment safety.** What backstops protect against a model going haywire in production (e.g. an absolute reserve-floor hardstop independent of the model output)? Deferred to Phase 3.
+- **Generalisation to other hardware.** Battery capacity, reserve fraction, and sensor names are currently hardcoded for one installation. Phase 3 will need a configuration layer for other users.
 
 ---
 

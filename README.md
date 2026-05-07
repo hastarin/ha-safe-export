@@ -2,7 +2,7 @@
 
 Predict the maximum amount of energy that can be safely exported from a home battery during the evening peak, without leaving the home short before solar recovers the next morning.
 
-> **Status:** Phase 1 (data extraction). Pre-implementation — specifications and design docs are complete; code in progress.
+> **Status:** Phase 2 (modelling) — data extraction complete; prediction model built and tested.
 
 ---
 
@@ -47,7 +47,7 @@ The data extraction is hardcoded to these specific sensors and providers. Genera
 
 ## How it works (high level)
 
-```
+```text
 ┌────────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
 │ HA recorder DB     │───▶│ extract.py       │───▶│ ha-safe-export.db   │
 │ (read-only)        │    │ daily extraction │    │ (one row per night) │
@@ -55,8 +55,8 @@ The data extraction is hardcoded to these specific sensors and providers. Genera
                                                               │
                                                               ▼
                           ┌────────────────────┐    ┌──────────────────┐
-                          │ Solcast forecast   │───▶│ predict.py       │
-                          │ Weather forecast   │    │ at 6pm daily     │
+                          │ Solcast forecast   │───▶│ model.py         │
+                          │ Weather forecast   │    │ predict() at 6pm │
                           │ Live HA state      │    └────────┬─────────┘
                           └────────────────────┘             │
                                                               ▼
@@ -70,24 +70,24 @@ Phase 1 builds the extraction half. Phase 2 builds the prediction half. Phase 3 
 
 ## Project structure
 
-```
+```text
 ha-safe-export/
-├── CLAUDE.md          ← Standing instructions for AI agents working on the code
-├── README.md          ← This file
+├── CLAUDE.md             ← Standing instructions for AI agents working on the code
+├── README.md             ← This file
 ├── docs/
-│   ├── SPEC.md        ← Project specification: prediction objective, success criteria
-│   ├── DATASET.md     ← Data contract: schema, sensors, formulas, validation samples
-│   └── DECISIONS.md   ← Rationale log for design choices (read before changing them)
+│   ├── SPEC.md           ← Project specification: prediction objective, success criteria
+│   ├── DATASET.md        ← Data contract: schema, sensors, formulas, validation samples
+│   └── DECISIONS.md      ← Rationale log for design choices (read before changing them)
 ├── src/
-│   ├── extract.py     ← Builds and refreshes the dataset (Phase 1)
-│   ├── schema.sql     ← Canonical DDL for the dataset DB
-│   ├── windows.py     ← Timezone-aware window math
-│   ├── model.py       ← Trains the predictor (Phase 2)
-│   └── predict.py     ← Inference (Phase 2 / 3)
+│   ├── extract.py        ← Builds and refreshes the dataset (Phase 1)
+│   ├── schema.sql        ← Canonical DDL for the dataset DB
+│   ├── windows.py        ← Timezone-aware window math
+│   └── model.py          ← Three-zone predictor + predict() function (Phase 2)
 ├── tests/
-│   ├── fixtures.py    ← Known-good values for three validation days
-│   └── test_extract.py
-├── data/              ← gitignored; holds the dataset DB
+│   ├── fixtures.py       ← Known-good values for three validation days
+│   ├── test_extract.py   ← Extraction fixture tests
+│   └── test_model.py     ← Model unit and regression tests
+├── data/                 ← gitignored; holds the dataset DB
 └── pyproject.toml
 ```
 
@@ -104,31 +104,137 @@ The `DECISIONS.md` log is the most important one to consult before changing how 
 
 ## Phases
 
-| Phase                  | Deliverable                                                                                                            | Status      |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------- |
-| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset; passes three validation fixtures                   | In progress |
-| **2. Modelling**       | A trained predictor with calibrated uncertainty estimates; meets safety / utilisation / calibration targets in SPEC.md | Not started |
-| **3. HA integration**  | HACS-installable custom component; auto-discovers sensors; exposes `sensor.safe_export_wh`                             | Not started |
+| Phase                  | Deliverable                                                                                                                          | Status        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
+| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (v1.2.0, 32 columns); passes three validation fixtures            | **Complete**  |
+| **2. Modelling**       | `src/model.py` — three-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3    | **Complete**  |
+| **3. HA integration**  | HACS-installable custom component; auto-discovers sensors; exposes `sensor.safe_export_wh`                                           | Not started   |
 
 ## Setup
 
-> Phase 1 implementation in progress. Setup instructions will be added once `src/extract.py` exists.
-
-When ready, the workflow will be:
-
 ```bash
-# Install
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# Install (no external dependencies beyond tzdata on Windows)
 pip install -e .
 
-# First-time extraction (point at HA recorder DB)
-python -m ha_safe_export.extract \
-  --source /path/to/home-assistant_v2.db \
-  --target data/ha-safe-export.db
+# First-time extraction (point at your HA recorder DB)
+python -m src.extract /path/to/home-assistant_v2.db
 
-# Daily incremental extraction (e.g. via cron at 11:30am local)
-python -m ha_safe_export.extract \
-  --source /path/to/home-assistant_v2.db \
-  --target data/ha-safe-export.db
+# Rebuild from scratch (e.g. after a methodology change)
+python -m src.extract /path/to/home-assistant_v2.db --rebuild
+
+# Run tests
+python -m pytest
+```
+
+## Home Assistant template sensors
+
+The model needs overnight mean temperature and humidity derived from the hourly weather forecast. Add these trigger-based template sensors to your HA `configuration.yaml` (or a package YAML file). They call `weather.get_forecasts` on a schedule and average the 6pm–11am window.
+
+```yaml
+template:
+  - trigger:
+      - trigger: time
+        at: "17:59:00"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    action:
+      - action: weather.get_forecasts
+        data:
+          type: hourly
+        target:
+          entity_id: weather.truganina_hourly
+        response_variable: hourly
+    sensor:
+      - name: "Overnight Forecast Temp Mean"
+        unique_id: overnight_forecast_temp_mean
+        unit_of_measurement: "°C"
+        state_class: measurement
+        state: >
+          {% set forecasts = hourly['weather.truganina_hourly']['forecast'] %}
+          {% set tomorrow = (now().date() + timedelta(days=1)).strftime('%Y-%m-%d') %}
+          {% set tonight = now().date().strftime('%Y-%m-%d') %}
+          {% set ns = namespace(total=0, count=0) %}
+          {% for f in forecasts %}
+            {% set dt = f.datetime %}
+            {% set is_tonight = dt >= tonight ~ 'T18:00:00' and dt < tonight ~ 'T24:00:00' %}
+            {% set is_tomorrow_morning = dt >= tomorrow ~ 'T00:00:00' and dt <= tomorrow ~ 'T11:00:00' %}
+            {% if is_tonight or is_tomorrow_morning %}
+              {% set ns.total = ns.total + f.temperature %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ (ns.total / ns.count) | round(1) if ns.count > 0 else 'unknown' }}
+
+      - name: "Overnight Forecast Humidity Mean"
+        unique_id: overnight_forecast_humidity_mean
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: >
+          {% set forecasts = hourly['weather.truganina_hourly']['forecast'] %}
+          {% set tomorrow = (now().date() + timedelta(days=1)).strftime('%Y-%m-%d') %}
+          {% set tonight = now().date().strftime('%Y-%m-%d') %}
+          {% set ns = namespace(total=0, count=0) %}
+          {% for f in forecasts %}
+            {% set dt = f.datetime %}
+            {% set is_tonight = dt >= tonight ~ 'T18:00:00' and dt < tonight ~ 'T24:00:00' %}
+            {% set is_tomorrow_morning = dt >= tomorrow ~ 'T00:00:00' and dt <= tomorrow ~ 'T11:00:00' %}
+            {% if is_tonight or is_tomorrow_morning %}
+              {% set ns.total = ns.total + f.humidity %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ (ns.total / ns.count) | round(1) if ns.count > 0 else 'unknown' }}
+```
+
+The `event_template_reloaded` trigger fires immediately when you reload templates via the UI — no HA restart needed after a config change.
+
+## Manual prediction at 6pm
+
+Read the values from HA and call `predict()` from the command line:
+
+```bash
+.venv\Scripts\python -c "
+from src.model import PredictInputs, predict
+result = predict(PredictInputs(
+    soc_at_6pm=85.0,                      # sensor.byd_battery_box_premium_hv_state_of_charge
+    bom_temp_mean=10.5,                   # sensor.overnight_forecast_temp_mean
+    bom_humidity_mean=87.0,               # sensor.overnight_forecast_humidity_mean
+    solcast_forecast_tomorrow_wh=18000,   # sensor.solcast_pv_forecast_forecast_tomorrow
+    provider='amber',                     # current provider: 'ea', 'amber', or 'globird'
+    min_soc=0.10,                         # battery min SoC setting (0.20 in storm mode)
+    confidence=0.90,
+))
+print(f'Safe export: {result.safe_export_wh:.0f} Wh  ({result.safe_export_wh/1000:.2f} kWh)')
+print(result.reasoning)
+"
+```
+
+Or from a Python script/REPL:
+
+```python
+from src.model import PredictInputs, predict
+
+result = predict(PredictInputs(
+    soc_at_6pm=85.0,
+    bom_temp_mean=10.5,
+    bom_humidity_mean=87.0,
+    solcast_forecast_tomorrow_wh=18000,
+    provider="amber",
+    min_soc=0.10,
+    confidence=0.90,
+))
+
+print(f"Safe export: {result.safe_export_wh:.0f} Wh")
+print(f"Zone: {result.zone}, model: {result.model_variant}")
+print(f"Predicted consumption: {result.predicted_consumption_kwh:.1f} kWh "
+      f"+ {result.error_buffer_kwh:.1f} kWh buffer")
+print(result.reasoning)
 ```
 
 ## Requirements
