@@ -12,6 +12,27 @@ Each entry has the form:
 
 ## Data architecture
 
+### Add BOM weather and Solcast forecast features (v1.1.0)
+
+**Decision:** Extend the dataset with 9 additional columns: BOM weather station data (temp, feels-like, rain, wind, gust), Solcast PV forecast, median indoor temperature, and max temperature.
+**Status:** Locked.
+**Date:** 2026-05-07
+
+**Rationale:** The original dataset (v1.0.0) captured overnight consumption and solar generation but lacked direct weather features beyond outdoor/indoor temperature. Adding:
+
+- **BOM station data** provides more granular weather context (wind affects heat loss, rain affects morning solar)
+- **Solcast forecast** is what the model will consume at inference time — including it in training data allows calibration of forecast vs actual
+- **Median indoor temp** is more representative of whole-home climate than a single bedroom sensor
+- **Max temperature** captures peak cooling load potential
+
+**Coverage:** BOM sensors available from April 2023 (full dataset coverage). Solcast from Oct 2024 (NULL before). Median temp from Jan 2024 (NULL before). The model can handle partial coverage via NULL-aware training.
+
+**Implementation note:** The rain sensor (`sensor.laverton_rain_since_9am`) and Solcast sensor store values in `state` only — `mean`/`min`/`max` are NULL in HA statistics. Rain uses `MAX(CAST(state AS REAL))`; Solcast reads `state` at the 17:00 bucket on the prior day.
+
+**Evidence:** All sensors verified present in HA statistics table with sufficient history.
+
+---
+
 ### Use SQLite for the derived dataset, not CSV
 
 **Decision:** The extraction script writes to a SQLite database, not a CSV file.

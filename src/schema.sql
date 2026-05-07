@@ -1,3 +1,4 @@
+-- Schema version: 1.1.0
 CREATE TABLE IF NOT EXISTS daily_observations (
     date TEXT PRIMARY KEY,                  -- 'YYYY-MM-DD' (the 11am-endpoint date)
     provider TEXT NOT NULL,                 -- 'ea' | 'amber' | 'globird'
@@ -12,6 +13,16 @@ CREATE TABLE IF NOT EXISTS daily_observations (
     min_outdoor_temp REAL,                  -- °C
     avg_indoor_temp REAL,                   -- °C
 
+    bom_temp_min REAL,                      -- °C, MIN(min) over 6pm–11am window
+    bom_temp_mean REAL,                     -- °C, AVG(mean) over 6pm–11am window
+    bom_feels_like_min REAL,                -- °C, MIN(min) over 6pm–11am window
+    bom_rain_max REAL,                      -- mm, MAX(state) over 6pm–11am window
+    bom_wind_mean REAL,                     -- km/h, AVG(mean) over 6pm–11am window
+    bom_gust_max REAL,                      -- km/h, MAX(max) over 6pm–11am window
+    solcast_forecast_tomorrow_wh INTEGER,   -- Wh, state at 17:00 prior day × 1000; NULL before Oct 2024
+    median_indoor_temp REAL,                -- °C, AVG(mean) over 6pm–11am window; NULL before Jan 2024
+    bom_temp_max REAL,                      -- °C, MAX(max) over 6pm–11am window
+
     solar_wh_before_11am INTEGER,           -- Wh
     consumption_wh INTEGER,                 -- Wh, balance-derived (primary)
     consumption_wh_load INTEGER,            -- Wh, raw integration (QA only)
@@ -23,7 +34,7 @@ CREATE TABLE IF NOT EXISTS daily_observations (
     curtailment_likely INTEGER NOT NULL,    -- 0/1
 
     extracted_at TEXT NOT NULL,             -- ISO8601 UTC
-    extraction_version TEXT NOT NULL        -- e.g. '1.0.0'
+    extraction_version TEXT NOT NULL        -- e.g. '1.1.0'
 );
 
 CREATE INDEX IF NOT EXISTS idx_provider ON daily_observations(provider);

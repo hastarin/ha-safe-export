@@ -41,7 +41,7 @@ Buckets are labeled by their **start** timestamp. A bucket with `start_ts = 18:0
 
 For cumulative-sum sensors (`sum` column): the value at `start_ts = 18:00` is the cumulative reading immediately at the start of bucket `[18:00, 19:00)`. Therefore window energy is:
 
-```
+```text
 window_energy = sum_at(start_ts = 11:00 row date) − sum_at(start_ts = 18:00 prior day)
 ```
 
@@ -59,6 +59,34 @@ window_energy = sum_at(start_ts = 11:00 row date) − sum_at(start_ts = 18:00 pr
 | Outdoor temperature             | `sensor.netatmo_outdoor_temperature`                | °C           | `min` / `mean` per bucket         | (≥ 2023-11-27) |
 | Indoor temperature              | `sensor.netatmo_indoor_temperature`                 | °C           | `mean` per bucket                 | (≥ 2023-11-27) |
 | Guests overnight                | `sensor.hastguests`                                 | bool-as-num  | `MAX(mean) over window > 0.5 → 1` | 2026-03-08     |
+
+### BOM weather station (Laverton)
+
+| Purpose         | Sensor                                 | Native unit | Method                                            | Available from |
+| --------------- | -------------------------------------- | ----------- | ------------------------------------------------- | -------------- |
+| Temperature     | `sensor.laverton_temp`                 | °C          | `MIN(min)` / `AVG(mean)` / `MAX(max)` over window | 2023-04-12     |
+| Feels-like temp | `sensor.laverton_temp_feels_like`      | °C          | `MIN(min)` over window                            | 2023-04-12     |
+| Rain since 9am  | `sensor.laverton_rain_since_9am`       | mm          | `MAX(CAST(state AS REAL))` over window            | 2023-04-12     |
+| Wind speed      | `sensor.laverton_wind_speed_kilometre` | km/h        | `AVG(mean)` over window                           | 2023-04-12     |
+| Gust speed      | `sensor.laverton_gust_speed_kilometre` | km/h        | `MAX(max)` over window                            | 2023-04-12     |
+
+Note: the rain sensor stores values in `state` only (`mean`/`min`/`max` are NULL in HA statistics). Use `MAX(CAST(state AS REAL))` to get the peak rain gauge reading over the window.
+
+### Solcast PV forecast
+
+| Purpose       | Sensor                                         | Native unit | Method                                               | Available from |
+| ------------- | ---------------------------------------------- | ----------- | ---------------------------------------------------- | -------------- |
+| Tomorrow's PV | `sensor.solcast_pv_forecast_forecast_tomorrow` | kWh         | `state` at 17:00 bucket prior day, \* 1000 to get Wh | 2024-10-17     |
+
+Note: the Solcast sensor stores values in `state` only (`mean` is NULL). Read `state` at `start_ts = ts(prior_day, 17)` to get the forecast value that would be visible at the 6pm decision time. NULL for rows before 2024-10-17.
+
+### Median indoor temperature
+
+| Purpose           | Sensor                      | Native unit | Method                  | Available from |
+| ----------------- | --------------------------- | ----------- | ----------------------- | -------------- |
+| Multi-room median | `sensor.median_temperature` | °C          | `AVG(mean)` over window | 2024-01-08     |
+
+NULL for rows before 2024-01-08.
 
 For sensors only available from a later date, the corresponding column is `NULL` for earlier rows (do not zero-fill).
 
@@ -81,6 +109,16 @@ CREATE TABLE daily_observations (
     min_outdoor_temp REAL,                  -- °C
     avg_indoor_temp REAL,                   -- °C
 
+    bom_temp_min REAL,                      -- °C, MIN(min) over 6pm–11am window
+    bom_temp_mean REAL,                     -- °C, AVG(mean) over 6pm–11am window
+    bom_feels_like_min REAL,                -- °C, MIN(min) over 6pm–11am window
+    bom_rain_max REAL,                      -- mm, MAX(state) over 6pm–11am window
+    bom_wind_mean REAL,                     -- km/h, AVG(mean) over 6pm–11am window
+    bom_gust_max REAL,                      -- km/h, MAX(max) over 6pm–11am window
+    solcast_forecast_tomorrow_wh INTEGER,   -- Wh, state at 17:00 prior day * 1000; NULL before Oct 2024
+    median_indoor_temp REAL,                -- °C, AVG(mean) over 6pm–11am window; NULL before Jan 2024
+    bom_temp_max REAL,                      -- °C, MAX(max) over 6pm–11am window
+
     solar_wh_before_11am INTEGER,           -- Wh
     consumption_wh INTEGER,                 -- Wh, balance-derived (primary)
     consumption_wh_load INTEGER,            -- Wh, raw integration (QA only)
@@ -92,7 +130,7 @@ CREATE TABLE daily_observations (
     curtailment_likely INTEGER NOT NULL,    -- 0/1
 
     extracted_at TEXT NOT NULL,             -- ISO8601 UTC
-    extraction_version TEXT NOT NULL        -- e.g. '1.0.0'
+    extraction_version TEXT NOT NULL        -- e.g. '1.1.0'
 );
 
 CREATE INDEX idx_provider ON daily_observations(provider);
@@ -109,23 +147,32 @@ CREATE TABLE extraction_meta (
 
 ## Column computation
 
-| Column                  | Formula                                                                                               |
-| ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| `soc_at_6pm`            | `byd_soc.mean` where `start_ts = 17:00 prior day local`                                               |
-| `min_soc_overnight`     | `MIN(byd_soc.min)` over buckets `18:00 prior ≤ start_ts ≤ 10:00 row date`                             |
-| `max_soc_prev_daylight` | `MAX(byd_soc.max)` over buckets `06:00 ≤ start_ts < 18:00 prior day`                                  |
-| `soc_at_11am`           | `byd_soc.mean` where `start_ts = 10:00 row date local`                                                |
-| `min_outdoor_temp`      | `MIN(outdoor.min)` over the window                                                                    |
-| `avg_indoor_temp`       | `AVG(indoor.mean)` over the window                                                                    |
-| `solar_wh_before_11am`  | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean × 1h)                                         |
-| `consumption_wh_load`   | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                           |
-| `grid_import_wh`        | `consumed.sum @ 11:00 − consumed.sum @ 18:00 prior`                                                   |
-| `grid_export_wh`        | `produced.sum @ 11:00 − produced.sum @ 18:00 prior`                                                   |
-| `battery_charged_wh`    | `charged.sum @ 11:00 − charged.sum @ 18:00 prior`                                                     |
-| `battery_discharged_wh` | `discharged.sum @ 11:00 − discharged.sum @ 18:00 prior`                                               |
-| `consumption_wh`        | `solar_wh_before_11am + grid_import_wh + battery_discharged_wh − grid_export_wh − battery_charged_wh` |
-| `curtailment_likely`    | `1 if max_soc_prev_daylight ≥ 99 else 0`                                                              |
-| `guests`                | `1 if MAX(hastguests.mean over window) > 0.5 else 0`. **NULL** if window ends before 2026-03-08.      |
+| Column                         | Formula                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `soc_at_6pm`                   | `byd_soc.mean` where `start_ts = 17:00 prior day local`                                               |
+| `min_soc_overnight`            | `MIN(byd_soc.min)` over buckets `18:00 prior ≤ start_ts ≤ 10:00 row date`                             |
+| `max_soc_prev_daylight`        | `MAX(byd_soc.max)` over buckets `06:00 ≤ start_ts < 18:00 prior day`                                  |
+| `soc_at_11am`                  | `byd_soc.mean` where `start_ts = 10:00 row date local`                                                |
+| `min_outdoor_temp`             | `MIN(outdoor.min)` over the window                                                                    |
+| `avg_indoor_temp`              | `AVG(indoor.mean)` over the window                                                                    |
+| `bom_temp_min`                 | `MIN(laverton_temp.min)` over the window                                                              |
+| `bom_temp_mean`                | `AVG(laverton_temp.mean)` over the window                                                             |
+| `bom_temp_max`                 | `MAX(laverton_temp.max)` over the window                                                              |
+| `bom_feels_like_min`           | `MIN(laverton_feels_like.min)` over the window                                                        |
+| `bom_rain_max`                 | `MAX(CAST(laverton_rain.state AS REAL))` over the window                                              |
+| `bom_wind_mean`                | `AVG(laverton_wind.mean)` over the window                                                             |
+| `bom_gust_max`                 | `MAX(laverton_gust.max)` over the window                                                              |
+| `solcast_forecast_tomorrow_wh` | `int(solcast.state * 1000)` where `start_ts = 17:00 prior day`. **NULL** before 2024-10-17.           |
+| `median_indoor_temp`           | `AVG(median_temperature.mean)` over the window. **NULL** before 2024-01-08.                           |
+| `solar_wh_before_11am`         | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean x 1h)                                         |
+| `consumption_wh_load`          | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                           |
+| `grid_import_wh`               | `consumed.sum @ 11:00 − consumed.sum @ 18:00 prior`                                                   |
+| `grid_export_wh`               | `produced.sum @ 11:00 − produced.sum @ 18:00 prior`                                                   |
+| `battery_charged_wh`           | `charged.sum @ 11:00 − charged.sum @ 18:00 prior`                                                     |
+| `battery_discharged_wh`        | `discharged.sum @ 11:00 − discharged.sum @ 18:00 prior`                                               |
+| `consumption_wh`               | `solar_wh_before_11am + grid_import_wh + battery_discharged_wh − grid_export_wh − battery_charged_wh` |
+| `curtailment_likely`           | `1 if max_soc_prev_daylight ≥ 99 else 0`                                                              |
+| `guests`                       | `1 if MAX(hastguests.mean over window) > 0.5 else 0`. **NULL** if window ends before 2026-03-08.      |
 
 All energy values are stored as **integer Wh**. Round to nearest whole Wh.
 SoC and temperature values are stored as **REAL** with 1 decimal place of precision.
@@ -174,69 +221,96 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 
 ### Feb 7, 2026 (AEDT) — full battery, sunny
 
-| Column                     | Expected                                     |
-| -------------------------- | -------------------------------------------- |
-| `provider`                 | `amber`                                      |
-| `hospital_period`          | 0                                            |
-| `guests`                   | NULL (sensor doesn't exist until 2026-03-08) |
-| `soc_at_6pm`               | 100.0                                        |
-| `min_soc_overnight`        | 73.9                                         |
-| `max_soc_prev_daylight`    | 100.0                                        |
-| `soc_at_11am`              | 98.9                                         |
-| `min_outdoor_temp`         | 17.6                                         |
-| `avg_indoor_temp`          | 21.7                                         |
-| `solar_wh_before_11am`     | 9612                                         |
-| `consumption_wh_load`      | 4949                                         |
-| `grid_import_wh`           | 24                                           |
-| `grid_export_wh`           | 4677                                         |
-| `battery_charged_wh`       | 3600                                         |
-| `battery_discharged_wh`    | 3398                                         |
-| `consumption_wh` (balance) | 4757                                         |
-| `curtailment_likely`       | 1                                            |
+| Column                         | Expected                                     |
+| ------------------------------ | -------------------------------------------- |
+| `provider`                     | `amber`                                      |
+| `hospital_period`              | 0                                            |
+| `guests`                       | NULL (sensor doesn't exist until 2026-03-08) |
+| `soc_at_6pm`                   | 100.0                                        |
+| `min_soc_overnight`            | 73.9                                         |
+| `max_soc_prev_daylight`        | 100.0                                        |
+| `soc_at_11am`                  | 98.9                                         |
+| `min_outdoor_temp`             | 17.6                                         |
+| `avg_indoor_temp`              | 21.7                                         |
+| `bom_temp_min`                 | 15.3                                         |
+| `bom_temp_mean`                | 17.2                                         |
+| `bom_temp_max`                 | 22.1                                         |
+| `bom_feels_like_min`           | 14.1                                         |
+| `bom_rain_max`                 | 0.0                                          |
+| `bom_wind_mean`                | 10.3                                         |
+| `bom_gust_max`                 | 32.0                                         |
+| `solcast_forecast_tomorrow_wh` | 43973                                        |
+| `median_indoor_temp`           | 22.7                                         |
+| `solar_wh_before_11am`         | 9612                                         |
+| `consumption_wh_load`          | 4949                                         |
+| `grid_import_wh`               | 24                                           |
+| `grid_export_wh`               | 4677                                         |
+| `battery_charged_wh`           | 3600                                         |
+| `battery_discharged_wh`        | 3398                                         |
+| `consumption_wh` (balance)     | 4757                                         |
+| `curtailment_likely`           | 1                                            |
 
 ### Mar 20, 2026 (AEDT) — cloudy, deep discharge
 
-| Column                     | Expected |
-| -------------------------- | -------- |
-| `provider`                 | `amber`  |
-| `hospital_period`          | 0        |
-| `guests`                   | 0        |
-| `soc_at_6pm`               | 63.2     |
-| `min_soc_overnight`        | 20.0     |
-| `max_soc_prev_daylight`    | 64.4     |
-| `soc_at_11am`              | 25.1     |
-| `min_outdoor_temp`         | 16.8     |
-| `avg_indoor_temp`          | 23.2     |
-| `solar_wh_before_11am`     | 2779     |
-| `consumption_wh_load`      | 6624     |
-| `grid_import_wh`           | 772      |
-| `grid_export_wh`           | 6        |
-| `battery_charged_wh`       | 3304     |
-| `battery_discharged_wh`    | 4954     |
-| `consumption_wh` (balance) | 5195     |
-| `curtailment_likely`       | 0        |
+| Column                         | Expected |
+| ------------------------------ | -------- |
+| `provider`                     | `amber`  |
+| `hospital_period`              | 0        |
+| `guests`                       | 0        |
+| `soc_at_6pm`                   | 63.2     |
+| `min_soc_overnight`            | 20.0     |
+| `max_soc_prev_daylight`        | 64.4     |
+| `soc_at_11am`                  | 25.1     |
+| `min_outdoor_temp`             | 16.8     |
+| `avg_indoor_temp`              | 23.2     |
+| `bom_temp_min`                 | 15.8     |
+| `bom_temp_mean`                | 17.0     |
+| `bom_temp_max`                 | 18.6     |
+| `bom_feels_like_min`           | 15.0     |
+| `bom_rain_max`                 | 0.4      |
+| `bom_wind_mean`                | 8.2      |
+| `bom_gust_max`                 | 24.0     |
+| `solcast_forecast_tomorrow_wh` | 34888    |
+| `median_indoor_temp`           | 22.3     |
+| `solar_wh_before_11am`         | 2779     |
+| `consumption_wh_load`          | 6624     |
+| `grid_import_wh`               | 772      |
+| `grid_export_wh`               | 6        |
+| `battery_charged_wh`           | 3304     |
+| `battery_discharged_wh`        | 4954     |
+| `consumption_wh` (balance)     | 5195     |
+| `curtailment_likely`           | 0        |
 
 ### Jul 17, 2025 (AEST) — winter, depleted, ea period
 
-| Column                     | Expected                        |
-| -------------------------- | ------------------------------- |
-| `provider`                 | `ea`                            |
-| `hospital_period`          | 0                               |
-| `guests`                   | NULL (sensor doesn't exist yet) |
-| `soc_at_6pm`               | 58.7                            |
-| `min_soc_overnight`        | 6.5                             |
-| `max_soc_prev_daylight`    | 65.7                            |
-| `soc_at_11am`              | 6.5                             |
-| `min_outdoor_temp`         | 10.0                            |
-| `avg_indoor_temp`          | 19.4                            |
-| `solar_wh_before_11am`     | 1007                            |
-| `consumption_wh_load`      | 13040                           |
-| `grid_import_wh`           | 6969                            |
-| `grid_export_wh`           | 1                               |
-| `battery_charged_wh`       | 327                             |
-| `battery_discharged_wh`    | 5051                            |
-| `consumption_wh` (balance) | 12699                           |
-| `curtailment_likely`       | 0                               |
+| Column                         | Expected                        |
+| ------------------------------ | ------------------------------- |
+| `provider`                     | `ea`                            |
+| `hospital_period`              | 0                               |
+| `guests`                       | NULL (sensor doesn't exist yet) |
+| `soc_at_6pm`                   | 58.7                            |
+| `min_soc_overnight`            | 6.5                             |
+| `max_soc_prev_daylight`        | 65.7                            |
+| `soc_at_11am`                  | 6.5                             |
+| `min_outdoor_temp`             | 10.0                            |
+| `avg_indoor_temp`              | 19.4                            |
+| `bom_temp_min`                 | 9.2                             |
+| `bom_temp_mean`                | 10.7                            |
+| `bom_temp_max`                 | 12.8                            |
+| `bom_feels_like_min`           | 5.4                             |
+| `bom_rain_max`                 | 0.0                             |
+| `bom_wind_mean`                | 17.4                            |
+| `bom_gust_max`                 | 41.0                            |
+| `solcast_forecast_tomorrow_wh` | 8789                            |
+| `median_indoor_temp`           | 19.2                            |
+| `solar_wh_before_11am`         | 1007                            |
+| `consumption_wh_load`          | 13040                           |
+| `grid_import_wh`               | 6969                            |
+| `grid_export_wh`               | 1                               |
+| `battery_charged_wh`           | 327                             |
+| `battery_discharged_wh`        | 5051                            |
+| `consumption_wh` (balance)     | 12699                           |
+| `curtailment_likely`           | 0                               |
 
 These three samples cover both DST regimes (AEST and AEDT), both providers active during validation, full and depleted battery states, sunny and cloudy days, and curtailment / no-curtailment.
 
@@ -255,7 +329,7 @@ These three samples cover both DST regimes (AEST and AEDT), both providers activ
 
 Each row's energy balance can be sanity-checked. Define:
 
-```
+```text
 imbalance_wh = consumption_wh_load − consumption_wh
 ```
 

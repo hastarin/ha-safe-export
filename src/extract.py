@@ -31,18 +31,28 @@ _SENSOR_IDS = {
     "outdoor_temp": "sensor.netatmo_outdoor_temperature",
     "indoor_temp": "sensor.netatmo_indoor_temperature",
     "guests": "sensor.hastguests",
+    "bom_temp": "sensor.laverton_temp",
+    "bom_feels_like": "sensor.laverton_temp_feels_like",
+    "bom_rain": "sensor.laverton_rain_since_9am",
+    "bom_wind": "sensor.laverton_wind_speed_kilometre",
+    "bom_gust": "sensor.laverton_gust_speed_kilometre",
+    "solcast": "sensor.solcast_pv_forecast_forecast_tomorrow",
+    "median_temp": "sensor.median_temperature",
 }
 
 
+_OPTIONAL_SENSORS = {"guests", "solcast", "median_temp"}
+
+
 def _get_metadata_ids(ha: sqlite3.Connection) -> dict[str, int | None]:
-    """Look up metadata IDs for all sensors. Guests is optional."""
+    """Look up metadata IDs for all sensors. Optional sensors return None if absent."""
     ids: dict[str, int | None] = {}
     for key, sensor_id in _SENSOR_IDS.items():
         row = ha.execute(
             "SELECT id FROM statistics_meta WHERE statistic_id = ?", (sensor_id,)
         ).fetchone()
         if row is None:
-            if key == "guests":
+            if key in _OPTIONAL_SENSORS:
                 ids[key] = None
             else:
                 raise ValueError(f"Required sensor not found in HA database: {sensor_id}")
@@ -156,6 +166,65 @@ def extract_row(
     ).fetchone()
     avg_indoor_temp = round(row[0], 1) if row and row[0] is not None else None
 
+    row = ha.execute(
+        "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_temp"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_temp_min = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_temp"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_temp_mean = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_temp"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_temp_max = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_feels_like"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_feels_like_min = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT MAX(CAST(state AS REAL)) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_rain"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_rain_max = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_wind"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_wind_mean = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_gust"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_gust_max = round(row[0], 1) if row and row[0] is not None else None
+
+    solcast_forecast_tomorrow_wh: int | None = None
+    if ids["solcast"] is not None:
+        row = ha.execute(
+            "SELECT state FROM statistics WHERE metadata_id = ? AND start_ts = ?",
+            (ids["solcast"], w.ts_17_prior),
+        ).fetchone()
+        if row and row[0] is not None:
+            solcast_forecast_tomorrow_wh = int(float(row[0]) * 1000)
+
+    median_indoor_temp: float | None = None
+    if ids["median_temp"] is not None:
+        row = ha.execute(
+            "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+            (ids["median_temp"], w.ts_18_prior, w.ts_10_today),
+        ).fetchone()
+        median_indoor_temp = round(row[0], 1) if row and row[0] is not None else None
+
     guests: int | None = None
     if morning_date >= GUESTS_SENSOR_START and ids["guests"] is not None:
         row = ha.execute(
@@ -190,6 +259,15 @@ def extract_row(
         "soc_at_11am": soc_at_11am,
         "min_outdoor_temp": min_outdoor_temp,
         "avg_indoor_temp": avg_indoor_temp,
+        "bom_temp_min": bom_temp_min,
+        "bom_temp_mean": bom_temp_mean,
+        "bom_feels_like_min": bom_feels_like_min,
+        "bom_rain_max": bom_rain_max,
+        "bom_wind_mean": bom_wind_mean,
+        "bom_gust_max": bom_gust_max,
+        "solcast_forecast_tomorrow_wh": solcast_forecast_tomorrow_wh,
+        "median_indoor_temp": median_indoor_temp,
+        "bom_temp_max": bom_temp_max,
         "solar_wh_before_11am": solar_wh,
         "consumption_wh": consumption_wh,
         "consumption_wh_load": consumption_wh_load,
@@ -275,6 +353,9 @@ def extract_all(
                 date, provider, guests, hospital_period,
                 soc_at_6pm, min_soc_overnight, max_soc_prev_daylight, soc_at_11am,
                 min_outdoor_temp, avg_indoor_temp,
+                bom_temp_min, bom_temp_mean, bom_feels_like_min, bom_rain_max,
+                bom_wind_mean, bom_gust_max, solcast_forecast_tomorrow_wh,
+                median_indoor_temp, bom_temp_max,
                 solar_wh_before_11am, consumption_wh, consumption_wh_load,
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
                 curtailment_likely, extracted_at, extraction_version
@@ -282,6 +363,9 @@ def extract_all(
                 :date, :provider, :guests, :hospital_period,
                 :soc_at_6pm, :min_soc_overnight, :max_soc_prev_daylight, :soc_at_11am,
                 :min_outdoor_temp, :avg_indoor_temp,
+                :bom_temp_min, :bom_temp_mean, :bom_feels_like_min, :bom_rain_max,
+                :bom_wind_mean, :bom_gust_max, :solcast_forecast_tomorrow_wh,
+                :median_indoor_temp, :bom_temp_max,
                 :solar_wh_before_11am, :consumption_wh, :consumption_wh_load,
                 :grid_import_wh, :grid_export_wh, :battery_charged_wh, :battery_discharged_wh,
                 :curtailment_likely, :extracted_at, :extraction_version
@@ -302,7 +386,7 @@ def extract_all(
 
     now_utc = datetime.now(timezone.utc).isoformat()
     for key, value in [
-        ("schema_version", "1.0.0"),
+        ("schema_version", "1.1.0"),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
         ("globird_start_date", "2026-05-05"),

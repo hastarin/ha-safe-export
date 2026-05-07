@@ -21,6 +21,14 @@ REAL_COLS = {
     "soc_at_11am",
     "min_outdoor_temp",
     "avg_indoor_temp",
+    "bom_temp_min",
+    "bom_temp_mean",
+    "bom_temp_max",
+    "bom_feels_like_min",
+    "bom_rain_max",
+    "bom_wind_mean",
+    "bom_gust_max",
+    "median_indoor_temp",
 }
 WH_COLS = {
     "solar_wh_before_11am",
@@ -30,8 +38,14 @@ WH_COLS = {
     "grid_export_wh",
     "battery_charged_wh",
     "battery_discharged_wh",
+    "solcast_forecast_tomorrow_wh",
 }
 EXACT_COLS = {"provider", "hospital_period", "guests", "curtailment_likely"}
+
+# Columns that may be NULL for some fixtures (tested for NULL vs value, not numeric tolerance)
+NULLABLE_REAL_COLS = {"bom_rain_max", "bom_wind_mean", "bom_gust_max", "bom_temp_min",
+                      "bom_temp_mean", "bom_temp_max", "bom_feels_like_min", "median_indoor_temp"}
+NULLABLE_WH_COLS = {"solcast_forecast_tomorrow_wh"}
 
 
 @pytest.fixture(scope="session")
@@ -59,11 +73,21 @@ def test_fixture_row(dataset_db, date_str, expected):
         )
 
     for col in REAL_COLS:
-        assert abs(row[col] - expected[col]) <= REAL_TOL, (
-            f"{date_str} {col}: got {row[col]}, expected {expected[col]} (tol ±{REAL_TOL})"
-        )
+        exp_val = expected[col]
+        got_val = row[col]
+        if col in NULLABLE_REAL_COLS and exp_val is None:
+            assert got_val is None, f"{date_str} {col}: expected NULL, got {got_val}"
+        else:
+            assert abs(got_val - exp_val) <= REAL_TOL, (
+                f"{date_str} {col}: got {got_val}, expected {exp_val} (tol ±{REAL_TOL})"
+            )
 
     for col in WH_COLS:
-        assert abs(row[col] - expected[col]) <= WH_TOL, (
-            f"{date_str} {col}: got {row[col]}, expected {expected[col]} (tol ±{WH_TOL} Wh)"
-        )
+        exp_val = expected[col]
+        got_val = row[col]
+        if col in NULLABLE_WH_COLS and exp_val is None:
+            assert got_val is None, f"{date_str} {col}: expected NULL, got {got_val}"
+        else:
+            assert abs(got_val - exp_val) <= WH_TOL, (
+                f"{date_str} {col}: got {got_val}, expected {exp_val} (tol ±{WH_TOL} Wh)"
+            )
