@@ -33,6 +33,22 @@ Each entry has the form:
 
 ---
 
+### Add humidity features (v1.2.0)
+
+**Decision:** Extend the dataset with 3 additional columns: `bom_humidity_mean`, `bom_humidity_max` (from `sensor.laverton_humidity`), and `median_indoor_humidity` (from `sensor.median_humidity`).
+**Status:** Locked.
+**Date:** 2026-05-07
+
+**Rationale:** The ENERGY_ANALYSIS.md document identified humidity as the primary unexplained variance in the cooling model (Zone 3, R²=0.38). AC load is driven by apparent comfort, which depends on both temperature and humidity. Having humidity data starting from this point will allow the cooling model to be re-evaluated once enough hot-night data accumulates.
+
+**Coverage:** `sensor.laverton_humidity` has full dataset coverage from 2023-04-12. `sensor.median_humidity` is NULL before 2024-01-08 — same boundary as `median_indoor_temp`, no new NULL region introduced.
+
+**Implementation note:** Both sensors store values in `mean`/`min`/`max` normally (unlike rain and Solcast which use `state` only). `bom_humidity_mean` uses `AVG(mean)`, `bom_humidity_max` uses `MAX(max)`, `median_indoor_humidity` uses `AVG(mean)` — all over the standard 6pm–11am overnight window.
+
+**Evidence:** Both sensors verified present in HA statistics table. Fixture values spot-checked across all three validation dates (Feb 7 2026, Mar 20 2026, Jul 17 2025). All 3 fixture tests pass after backfill.
+
+---
+
 ### Use SQLite for the derived dataset, not CSV
 
 **Decision:** The extraction script writes to a SQLite database, not a CSV file.

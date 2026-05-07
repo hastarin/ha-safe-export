@@ -56,3 +56,4 @@ dmypy.json
 
 # Claude Code
 .claude/
+.mcp.json

@@ -38,10 +38,12 @@ _SENSOR_IDS = {
     "bom_gust": "sensor.laverton_gust_speed_kilometre",
     "solcast": "sensor.solcast_pv_forecast_forecast_tomorrow",
     "median_temp": "sensor.median_temperature",
+    "bom_humidity": "sensor.laverton_humidity",
+    "median_humidity": "sensor.median_humidity",
 }
 
 
-_OPTIONAL_SENSORS = {"guests", "solcast", "median_temp"}
+_OPTIONAL_SENSORS = {"guests", "solcast", "median_temp", "median_humidity"}
 
 
 def _get_metadata_ids(ha: sqlite3.Connection) -> dict[str, int | None]:
@@ -225,6 +227,26 @@ def extract_row(
         ).fetchone()
         median_indoor_temp = round(row[0], 1) if row and row[0] is not None else None
 
+    row = ha.execute(
+        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_humidity"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_humidity_mean = round(row[0], 1) if row and row[0] is not None else None
+
+    row = ha.execute(
+        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["bom_humidity"], w.ts_18_prior, w.ts_10_today),
+    ).fetchone()
+    bom_humidity_max = round(row[0], 1) if row and row[0] is not None else None
+
+    median_indoor_humidity: float | None = None
+    if ids["median_humidity"] is not None:
+        row = ha.execute(
+            "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+            (ids["median_humidity"], w.ts_18_prior, w.ts_10_today),
+        ).fetchone()
+        median_indoor_humidity = round(row[0], 1) if row and row[0] is not None else None
+
     guests: int | None = None
     if morning_date >= GUESTS_SENSOR_START and ids["guests"] is not None:
         row = ha.execute(
@@ -268,6 +290,9 @@ def extract_row(
         "solcast_forecast_tomorrow_wh": solcast_forecast_tomorrow_wh,
         "median_indoor_temp": median_indoor_temp,
         "bom_temp_max": bom_temp_max,
+        "bom_humidity_mean": bom_humidity_mean,
+        "bom_humidity_max": bom_humidity_max,
+        "median_indoor_humidity": median_indoor_humidity,
         "solar_wh_before_11am": solar_wh,
         "consumption_wh": consumption_wh,
         "consumption_wh_load": consumption_wh_load,
@@ -356,6 +381,7 @@ def extract_all(
                 bom_temp_min, bom_temp_mean, bom_feels_like_min, bom_rain_max,
                 bom_wind_mean, bom_gust_max, solcast_forecast_tomorrow_wh,
                 median_indoor_temp, bom_temp_max,
+                bom_humidity_mean, bom_humidity_max, median_indoor_humidity,
                 solar_wh_before_11am, consumption_wh, consumption_wh_load,
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
                 curtailment_likely, extracted_at, extraction_version
@@ -366,6 +392,7 @@ def extract_all(
                 :bom_temp_min, :bom_temp_mean, :bom_feels_like_min, :bom_rain_max,
                 :bom_wind_mean, :bom_gust_max, :solcast_forecast_tomorrow_wh,
                 :median_indoor_temp, :bom_temp_max,
+                :bom_humidity_mean, :bom_humidity_max, :median_indoor_humidity,
                 :solar_wh_before_11am, :consumption_wh, :consumption_wh_load,
                 :grid_import_wh, :grid_export_wh, :battery_charged_wh, :battery_discharged_wh,
                 :curtailment_likely, :extracted_at, :extraction_version
@@ -386,7 +413,7 @@ def extract_all(
 
     now_utc = datetime.now(timezone.utc).isoformat()
     for key, value in [
-        ("schema_version", "1.1.0"),
+        ("schema_version", "1.2.0"),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
         ("globird_start_date", "2026-05-05"),

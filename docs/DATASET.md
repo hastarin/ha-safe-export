@@ -69,6 +69,7 @@ window_energy = sum_at(start_ts = 11:00 row date) − sum_at(start_ts = 18:00 pr
 | Rain since 9am  | `sensor.laverton_rain_since_9am`       | mm          | `MAX(CAST(state AS REAL))` over window            | 2023-04-12     |
 | Wind speed      | `sensor.laverton_wind_speed_kilometre` | km/h        | `AVG(mean)` over window                           | 2023-04-12     |
 | Gust speed      | `sensor.laverton_gust_speed_kilometre` | km/h        | `MAX(max)` over window                            | 2023-04-12     |
+| Humidity        | `sensor.laverton_humidity`             | %           | `AVG(mean)` / `MAX(max)` over window              | 2023-04-12     |
 
 Note: the rain sensor stores values in `state` only (`mean`/`min`/`max` are NULL in HA statistics). Use `MAX(CAST(state AS REAL))` to get the peak rain gauge reading over the window.
 
@@ -85,6 +86,14 @@ Note: the Solcast sensor stores values in `state` only (`mean` is NULL). Read `s
 | Purpose           | Sensor                      | Native unit | Method                  | Available from |
 | ----------------- | --------------------------- | ----------- | ----------------------- | -------------- |
 | Multi-room median | `sensor.median_temperature` | °C          | `AVG(mean)` over window | 2024-01-08     |
+
+NULL for rows before 2024-01-08.
+
+### Median indoor humidity
+
+| Purpose           | Sensor                    | Native unit | Method                  | Available from |
+| ----------------- | ------------------------- | ----------- | ----------------------- | -------------- |
+| Multi-room median | `sensor.median_humidity`  | %           | `AVG(mean)` over window | 2024-01-08     |
 
 NULL for rows before 2024-01-08.
 
@@ -118,6 +127,9 @@ CREATE TABLE daily_observations (
     solcast_forecast_tomorrow_wh INTEGER,   -- Wh, state at 17:00 prior day * 1000; NULL before Oct 2024
     median_indoor_temp REAL,                -- °C, AVG(mean) over 6pm–11am window; NULL before Jan 2024
     bom_temp_max REAL,                      -- °C, MAX(max) over 6pm–11am window
+    bom_humidity_mean REAL,                 -- %, AVG(mean) over 6pm–11am window
+    bom_humidity_max REAL,                  -- %, MAX(max) over 6pm–11am window
+    median_indoor_humidity REAL,            -- %, AVG(mean) over 6pm–11am window; NULL before Jan 2024
 
     solar_wh_before_11am INTEGER,           -- Wh
     consumption_wh INTEGER,                 -- Wh, balance-derived (primary)
@@ -164,6 +176,9 @@ CREATE TABLE extraction_meta (
 | `bom_gust_max`                 | `MAX(laverton_gust.max)` over the window                                                              |
 | `solcast_forecast_tomorrow_wh` | `int(solcast.state * 1000)` where `start_ts = 17:00 prior day`. **NULL** before 2024-10-17.           |
 | `median_indoor_temp`           | `AVG(median_temperature.mean)` over the window. **NULL** before 2024-01-08.                           |
+| `bom_humidity_mean`            | `AVG(laverton_humidity.mean)` over the window                                                         |
+| `bom_humidity_max`             | `MAX(laverton_humidity.max)` over the window                                                          |
+| `median_indoor_humidity`       | `AVG(median_humidity.mean)` over the window. **NULL** before 2024-01-08.                              |
 | `solar_wh_before_11am`         | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean x 1h)                                         |
 | `consumption_wh_load`          | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                           |
 | `grid_import_wh`               | `consumed.sum @ 11:00 − consumed.sum @ 18:00 prior`                                                   |
