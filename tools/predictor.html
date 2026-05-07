@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Overnight Power Predictor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #0f1117;
+      --bg-card: #1a1d27;
+      --bg-card-hover: #1f2235;
+      --border: #2a2d3e;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.15);
+      --green: #22c55e;
+      --green-bg: rgba(34, 197, 94, 0.08);
+      --green-border: rgba(34, 197, 94, 0.25);
+      --red: #ef4444;
+      --red-bg: rgba(239, 68, 68, 0.08);
+      --red-border: rgba(239, 68, 68, 0.25);
+      --amber: #f59e0b;
+      --radius: 10px;
+      --radius-sm: 6px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 1.5rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0 0 0.25rem;
+      color: var(--text);
+    }
+
+    .subtitle {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .zone-badge {
+      background: var(--accent-glow);
+      color: var(--accent);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .inputs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      margin-bottom: 1rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.875rem;
+    }
+
+    .card-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.35rem;
+    }
+
+    .card-value {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.625rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      height: 4px;
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+      cursor: pointer;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border: none;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    .card.dim { opacity: 0.45; pointer-events: none; }
+
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin-bottom: 1rem;
+    }
+
+    .result-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.875rem;
+    }
+
+    .result-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.35rem;
+    }
+
+    .result-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 2px;
+    }
+
+    .result-note {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+    }
+
+    .rec-box {
+      border-radius: var(--radius);
+      padding: 0.875rem 1rem;
+      margin-bottom: 1rem;
+      border: 1px solid;
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }
+
+    .rec-box.export {
+      background: var(--green-bg);
+      border-color: var(--green-border);
+      color: #86efac;
+    }
+
+    .rec-box.no-export {
+      background: var(--red-bg);
+      border-color: var(--red-border);
+      color: #fca5a5;
+    }
+
+    .rec-box strong { font-weight: 600; }
+
+    .model-detail {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 0.875rem;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+
+    .model-detail .detail-row {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .model-detail .detail-key {
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Overnight power predictor</h1>
+      <div class="subtitle">
+        Three-zone linear model &middot; Hospital periods excluded &middot;
+        <span class="zone-badge" id="zone-label">Heating zone</span>
+      </div>
+    </header>
+
+    <div class="inputs-grid">
+      <div class="card">
+        <div class="card-label">Mean overnight temp (BOM)</div>
+        <div class="card-value" id="temp-display">5°C</div>
+        <input type="range" min="3" max="31" value="5" step="1" id="temp" />
+      </div>
+
+      <div class="card" id="solcast-card">
+        <div class="card-label">Solcast forecast tomorrow</div>
+        <div class="card-value" id="solcast-display">14.8 kWh</div>
+        <input type="range" min="0" max="35" value="14.8" step="0.5" id="solcast" />
+      </div>
+
+      <div class="card" id="humidity-card">
+        <div class="card-label">Overnight humidity (BOM)</div>
+        <div class="card-value" id="humidity-display">60%</div>
+        <input type="range" min="20" max="100" value="60" step="1" id="humidity" />
+      </div>
+
+      <div class="card">
+        <div class="card-label">6pm battery SOC</div>
+        <div class="card-value" id="soc-display">92%</div>
+        <input type="range" min="20" max="100" value="92" step="1" id="soc" />
+      </div>
+
+      <div class="card">
+        <div class="card-label">Min SOC cutoff</div>
+        <div class="card-value" id="minsoc-display">10%</div>
+        <input type="range" min="5" max="30" value="10" step="1" id="minsoc" />
+      </div>
+
+      <div class="card">
+        <div class="card-label">Confidence level</div>
+        <div class="card-value" id="conf-display">P50</div>
+        <input type="range" min="0" max="3" value="1" step="1" id="conf" />
+      </div>
+    </div>
+
+    <div class="results-grid">
+      <div class="result-card">
+        <div class="result-label">Predicted consumption</div>
+        <div class="result-value" id="consumption">—</div>
+        <div class="result-note" id="conf-note">median estimate</div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Error buffer</div>
+        <div class="result-value" id="buffer">—</div>
+        <div class="result-note" id="buffer-note">—</div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Available discharge</div>
+        <div class="result-value" id="available">—</div>
+        <div class="result-note" id="soc-note">—</div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Grid import needed</div>
+        <div class="result-value" id="grid">—</div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Safe to export</div>
+        <div class="result-value" id="export">—</div>
+      </div>
+    </div>
+
+    <div class="rec-box" id="rec-box">
+      <span id="rec-text">—</span>
+    </div>
+
+    <div class="model-detail" id="model-detail">—</div>
+  </div>
+
+  <script>
+    const BATTERY_KWH = 13.8;
+
+    // Heating zone (temp < 19°C): consumption = b0 + b1*temp + b2*solcast_kwh
+    const H = { b0: 19.7258, b1: -0.7756, b2: -0.070291, R2: 0.77, n: 676 };
+    // Heating fallback (no Solcast): consumption = b0 + b1*temp
+    const H_FALLBACK = { b0: 18.8039, b1: -0.8614, R2: 0.71 };
+    // P95 buffer scaled by confidence
+    const H_P95 = 3.562;
+
+    // Cooling zone (temp > 21°C): consumption = b0 + b1*temp + b2*humidity_pct
+    const C = { b0: -13.4046, b1: 0.7231, b2: 0.059498, R2: 0.37, n: 49 };
+    // Cooling fallback (no humidity)
+    const C_FALLBACK = { b0: -6.756, b1: 0.660 };
+    const C_P95 = 3.136;
+
+    // Mild zone (19–21°C): empirical percentile table
+    const MILD = { p50: 4.601, p75: 6.583, p90: 7.829, p95: 8.425, n: 59 };
+
+    const CONF_LEVELS = [
+      { label: "P50 — median",           key: "p50", scale: 0.31 },
+      { label: "P75 — cautious",          key: "p75", scale: 0.58 },
+      { label: "P90 — conservative",      key: "p90", scale: 0.87 },
+      { label: "P95 — very conservative", key: "p95", scale: 1.00 },
+    ];
+
+    function getZone(temp) {
+      if (temp < 19) return "heating";
+      if (temp <= 21) return "mild";
+      return "cooling";
+    }
+
+    function update() {
+      const temp     = parseFloat(document.getElementById("temp").value);
+      const solcast  = parseFloat(document.getElementById("solcast").value);
+      const humidity = parseFloat(document.getElementById("humidity").value);
+      const soc      = parseInt(document.getElementById("soc").value);
+      const minSOC   = parseInt(document.getElementById("minsoc").value);
+      const confIdx  = parseInt(document.getElementById("conf").value);
+      const conf     = CONF_LEVELS[confIdx];
+
+      document.getElementById("temp-display").textContent     = temp + "°C";
+      document.getElementById("solcast-display").textContent  = solcast.toFixed(1) + " kWh";
+      document.getElementById("humidity-display").textContent = humidity.toFixed(0) + "%";
+      document.getElementById("soc-display").textContent      = soc + "%";
+      document.getElementById("minsoc-display").textContent   = minSOC + "%";
+      document.getElementById("conf-display").textContent     = conf.label;
+
+      const zone = getZone(temp);
+      const zoneLabels = { heating: "Heating zone", mild: "Mild zone", cooling: "Cooling zone" };
+      document.getElementById("zone-label").textContent = zoneLabels[zone];
+
+      // Show/hide relevant inputs
+      const solcastCard  = document.getElementById("solcast-card");
+      const humidityCard = document.getElementById("humidity-card");
+      solcastCard.classList.toggle("dim", zone !== "heating");
+      humidityCard.classList.toggle("dim", zone !== "cooling");
+
+      let consumption, buffer, confNote, modelDetail, variant;
+
+      if (zone === "mild") {
+        consumption = MILD[conf.key];
+        buffer = 0;
+        confNote = `${conf.label} of ${MILD.n} mild nights`;
+        variant = "mild_empirical";
+        modelDetail = `Mild zone (19–21°C): temperature has no predictive signal (R²≈0) — HVAC isn't running. ` +
+          `Using empirical percentile table from ${MILD.n} nights. ` +
+          `P50=${MILD.p50} P75=${MILD.p75} P90=${MILD.p90} P95=${MILD.p95} kWh.`;
+
+      } else if (zone === "heating") {
+        const solcast_kwh = solcast;
+        const base = H.b0 + H.b1 * temp + H.b2 * solcast_kwh;
+        buffer = H_P95 * conf.scale;
+        consumption = Math.max(1, base);
+        confNote = confIdx === 0
+          ? "median estimate (no buffer)"
+          : `+${buffer.toFixed(2)} kWh ${conf.label} buffer (${(conf.scale * 100).toFixed(0)}% of P95)`;
+        variant = "heating_with_solcast";
+        modelDetail = `Heating zone (<19°C): consumption = ${H.b0} + (${H.b1}×temp) + (${H.b2}×solcast_kWh). ` +
+          `R²=${H.R2} · n=${H.n} · P95 buffer=${H_P95} kWh.`;
+
+      } else { // cooling
+        const base = C.b0 + C.b1 * temp + C.b2 * humidity;
+        buffer = C_P95 * conf.scale;
+        consumption = Math.max(1, base);
+        confNote = confIdx === 0
+          ? "median estimate (no buffer)"
+          : `+${buffer.toFixed(2)} kWh ${conf.label} buffer (${(conf.scale * 100).toFixed(0)}% of P95)`;
+        variant = "cooling_with_humidity";
+        modelDetail = `Cooling zone (>21°C): consumption = ${C.b0} + (${C.b1}×temp) + (${C.b2}×humidity%). ` +
+          `R²=${C.R2} · n=${C.n} (weak — more summer data needed) · P95 buffer=${C_P95} kWh.`;
+      }
+
+      const totalNeeded  = consumption + buffer;
+      const availableSOC = soc - minSOC;
+      const available    = (availableSOC / 100) * BATTERY_KWH;
+      const gridNeeded   = Math.max(0, totalNeeded - available);
+      const exportable   = Math.max(0, available - totalNeeded);
+
+      document.getElementById("consumption").textContent  = consumption.toFixed(2) + " kWh";
+      document.getElementById("conf-note").textContent    = confNote;
+      document.getElementById("buffer").textContent       = buffer > 0 ? "+" + buffer.toFixed(2) + " kWh" : "—";
+      document.getElementById("buffer-note").textContent  = buffer > 0 ? conf.label + " safety buffer" : "no buffer at P50";
+      document.getElementById("available").textContent    = available.toFixed(2) + " kWh";
+      document.getElementById("soc-note").textContent     = `${availableSOC}% of ${BATTERY_KWH} kWh`;
+      document.getElementById("grid").textContent         = gridNeeded.toFixed(2) + " kWh";
+      document.getElementById("model-detail").textContent = modelDetail;
+
+      const recBox  = document.getElementById("rec-box");
+      const recText = document.getElementById("rec-text");
+      const expDiv  = document.getElementById("export");
+
+      if (exportable > 0.05) {
+        recBox.className = "rec-box export";
+        recText.innerHTML = `<strong>Export available:</strong> At ${conf.label}, you can safely export ` +
+          `<strong>${exportable.toFixed(2)} kWh</strong> during peak (6–9pm) and still cover the overnight load.`;
+        expDiv.textContent = exportable.toFixed(2) + " kWh";
+        expDiv.style.color = "var(--green)";
+      } else {
+        recBox.className = "rec-box no-export";
+        recText.innerHTML = `<strong>No export available:</strong> Battery can supply ` +
+          `<strong>${available.toFixed(2)} kWh</strong> but expected load is ` +
+          `<strong>${totalNeeded.toFixed(2)} kWh</strong> ` +
+          `(${consumption.toFixed(2)} + ${buffer.toFixed(2)} kWh buffer). ` +
+          `Grid import needed: <strong>${gridNeeded.toFixed(2)} kWh</strong>.`;
+        expDiv.textContent = "0.00 kWh";
+        expDiv.style.color = "var(--red)";
+      }
+    }
+
+    ["temp", "solcast", "humidity", "soc", "minsoc", "conf"].forEach(id => {
+      document.getElementById(id).addEventListener("input", update);
+    });
+    update();
+  </script>
+</body>
+</html>
