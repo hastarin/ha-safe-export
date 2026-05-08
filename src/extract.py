@@ -16,8 +16,8 @@ FIRST_DATE = date(2023, 11, 28)
 GUESTS_SENSOR_START = date(2026, 3, 8)
 AMBER_START = date(2025, 8, 16)
 GLOBIRD_START = date(2026, 5, 5)
-HOSPITAL_START = date(2025, 9, 28)
-HOSPITAL_END = date(2025, 11, 3)
+ABSENCE_START = date(2025, 9, 28)
+ABSENCE_END = date(2025, 11, 3)
 IMBALANCE_WARN_THRESHOLD = 3000
 
 _SENSOR_IDS = {
@@ -71,8 +71,8 @@ def _provider(d: date) -> str:
     return "ea"
 
 
-def _hospital(d: date) -> int:
-    return 1 if HOSPITAL_START <= d <= HOSPITAL_END else 0
+def _absence(d: date) -> int:
+    return 1 if ABSENCE_START <= d <= ABSENCE_END else 0
 
 
 def _cum_delta(
@@ -274,7 +274,7 @@ def extract_row(
         "date": date_str,
         "provider": _provider(morning_date),
         "guests": guests,
-        "hospital_period": _hospital(morning_date),
+        "absence_period": _absence(morning_date),
         "soc_at_6pm": soc_at_6pm,
         "min_soc_overnight": min_soc_overnight,
         "max_soc_prev_daylight": max_soc_prev_daylight,
@@ -375,7 +375,7 @@ def extract_all(
         ds.execute(
             """
             INSERT OR REPLACE INTO daily_observations (
-                date, provider, guests, hospital_period,
+                date, provider, guests, absence_period,
                 soc_at_6pm, min_soc_overnight, max_soc_prev_daylight, soc_at_11am,
                 min_outdoor_temp, avg_indoor_temp,
                 bom_temp_min, bom_temp_mean, bom_feels_like_min, bom_rain_max,
@@ -386,7 +386,7 @@ def extract_all(
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
                 curtailment_likely, extracted_at, extraction_version
             ) VALUES (
-                :date, :provider, :guests, :hospital_period,
+                :date, :provider, :guests, :absence_period,
                 :soc_at_6pm, :min_soc_overnight, :max_soc_prev_daylight, :soc_at_11am,
                 :min_outdoor_temp, :avg_indoor_temp,
                 :bom_temp_min, :bom_temp_mean, :bom_feels_like_min, :bom_rain_max,

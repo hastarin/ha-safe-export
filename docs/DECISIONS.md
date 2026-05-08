@@ -211,12 +211,12 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 
 ## Data quality and coverage
 
-### Flag the hospital period; do not exclude its rows
+### Flag the absence period; do not exclude its rows
 
-**Decision:** Rows where `2025-09-28 ≤ date ≤ 2025-11-03` are written with `hospital_period = 1` but otherwise computed normally.
+**Decision:** Rows where `2025-09-28 ≤ date ≤ 2025-11-03` are written with `absence_period = 1` but otherwise computed normally.
 **Status:** Locked.
 
-**Rationale:** Excluding the rows from the dataset would create gaps that complicate downstream code (e.g. time-series operations). Writing them with a flag preserves chronological completeness while letting the model trainer filter cleanly with `WHERE hospital_period = 0`. The data itself remains useful for QA and pattern comparison.
+**Rationale:** Excluding the rows from the dataset would create gaps that complicate downstream code (e.g. time-series operations). Writing them with a flag preserves chronological completeness while letting the model trainer filter cleanly with `WHERE absence_period = 0`. The data itself remains useful for QA and pattern comparison.
 
 ### Guests column is NULL before 2026-03-08
 
@@ -299,7 +299,7 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 **Status:** Locked.
 **Date:** 2026-05-07
 
-**Rationale:** Solcast correlates with `solar_wh_before_11am` at r=0.778 (n=522 non-hospital nights), which is stronger than any other available predictor. The full-day forecast averages ~21% of actual pre-11am solar (ratio stable across seasons: 0.19–0.24), so regression coefficients naturally learn the scaling. Building a separate solar sub-model would add complexity without meaningfully improving prediction accuracy at current dataset size.
+**Rationale:** Solcast correlates with `solar_wh_before_11am` at r=0.778 (n=522 non-absence nights), which is stronger than any other available predictor. The full-day forecast averages ~21% of actual pre-11am solar (ratio stable across seasons: 0.19–0.24), so regression coefficients naturally learn the scaling. Building a separate solar sub-model would add complexity without meaningfully improving prediction accuracy at current dataset size.
 
 **Evidence:** Ratio of `solar_wh_before_11am / solcast_forecast_tomorrow_wh` across seasons: summer=0.22, autumn=0.19, winter=0.20, spring=0.24. The consistency confirms that one coefficient handles the conversion adequately.
 

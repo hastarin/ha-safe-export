@@ -8,7 +8,7 @@ CREATE TABLE daily_observations_new (
     date TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
     guests INTEGER,
-    hospital_period INTEGER NOT NULL,
+    absence_period INTEGER NOT NULL,
 
     soc_at_6pm REAL,
     min_soc_overnight REAL,
@@ -45,7 +45,7 @@ CREATE TABLE daily_observations_new (
 
 -- Copy existing data with NULLs for new columns
 INSERT INTO daily_observations_new SELECT
-    date, provider, guests, hospital_period,
+    date, provider, guests, absence_period,
     soc_at_6pm, min_soc_overnight, max_soc_prev_daylight, soc_at_11am,
     min_outdoor_temp, avg_indoor_temp,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
@@ -58,7 +58,7 @@ DROP TABLE daily_observations;
 ALTER TABLE daily_observations_new RENAME TO daily_observations;
 
 CREATE INDEX IF NOT EXISTS idx_provider ON daily_observations(provider);
-CREATE INDEX IF NOT EXISTS idx_hospital ON daily_observations(hospital_period);
+CREATE INDEX IF NOT EXISTS idx_absence ON daily_observations(absence_period);
 
 UPDATE extraction_meta SET value = '1.1.0', updated_at = datetime('now')
 WHERE key = 'schema_version';

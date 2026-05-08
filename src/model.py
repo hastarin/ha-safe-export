@@ -77,7 +77,7 @@ class PredictInputs:
     """Forecast overnight mean temperature (°C). Used to select zone and predict consumption."""
 
     provider: Provider
-    """Current energy provider — affects confidence threshold strategy."""
+    """Current energy provider — recorded for model stratification; does not alter the prediction."""
 
     solcast_forecast_tomorrow_wh: float | None = None
     """Solcast full-day PV forecast for tomorrow (Wh). Available from Oct 2024 onward.
@@ -163,12 +163,10 @@ def _predict_consumption(
 
 def _provider_note(provider: Provider) -> str:
     if provider == "globird":
-        return (
-            "GloBird free window (11am–2pm) guarantees recharge — aggressive export is acceptable."
-        )
+        return "Provider: GloBird (free 11am–2pm window guarantees next-day recharge)."
     elif provider == "amber":
-        return "Amber variable pricing — preserve battery for high-price peak where possible."
-    return "Flat-rate provider — standard safety margins apply."
+        return "Provider: Amber (variable wholesale pricing)."
+    return "Provider: Energy Australia (flat-rate)."
 
 
 # ---------------------------------------------------------------------------

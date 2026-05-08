@@ -40,7 +40,7 @@ WH_COLS = {
     "battery_discharged_wh",
     "solcast_forecast_tomorrow_wh",
 }
-EXACT_COLS = {"provider", "hospital_period", "guests", "curtailment_likely"}
+EXACT_COLS = {"provider", "absence_period", "guests", "curtailment_likely"}
 
 # Columns that may be NULL for some fixtures (tested for NULL vs value, not numeric tolerance)
 NULLABLE_REAL_COLS = {"bom_rain_max", "bom_wind_mean", "bom_gust_max", "bom_temp_min",

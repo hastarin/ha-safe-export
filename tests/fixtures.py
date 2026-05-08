@@ -10,7 +10,7 @@ FIXTURES: dict[str, dict] = {
     # Feb 7, 2026 — AEDT, sunny, full battery, amber, curtailed
     "2026-02-07": {
         "provider": "amber",
-        "hospital_period": 0,
+        "absence_period": 0,
         "guests": None,  # sensor didn't exist until 2026-03-08
         "soc_at_6pm": 100.0,
         "min_soc_overnight": 73.9,
@@ -42,7 +42,7 @@ FIXTURES: dict[str, dict] = {
     # Mar 20, 2026 — AEDT, cloudy, deep discharge, amber, no curtailment
     "2026-03-20": {
         "provider": "amber",
-        "hospital_period": 0,
+        "absence_period": 0,
         "guests": 0,
         "soc_at_6pm": 63.2,
         "min_soc_overnight": 20.0,
@@ -74,7 +74,7 @@ FIXTURES: dict[str, dict] = {
     # Jul 17, 2025 — AEST, winter, depleted, ea, no curtailment
     "2025-07-17": {
         "provider": "ea",
-        "hospital_period": 0,
+        "absence_period": 0,
         "guests": None,  # sensor didn't exist until 2026-03-08
         "soc_at_6pm": 58.7,
         "min_soc_overnight": 6.5,

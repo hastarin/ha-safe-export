@@ -108,7 +108,7 @@ CREATE TABLE daily_observations (
     date TEXT PRIMARY KEY,                  -- 'YYYY-MM-DD' (the 11am-endpoint date)
     provider TEXT NOT NULL,                 -- 'ea' | 'amber' | 'globird'
     guests INTEGER,                         -- 0/1, NULL if before 2026-03-08
-    hospital_period INTEGER NOT NULL,       -- 0/1
+    absence_period INTEGER NOT NULL,       -- 0/1
 
     soc_at_6pm REAL,                        -- %
     min_soc_overnight REAL,                 -- %
@@ -146,7 +146,7 @@ CREATE TABLE daily_observations (
 );
 
 CREATE INDEX idx_provider ON daily_observations(provider);
-CREATE INDEX idx_hospital ON daily_observations(hospital_period);
+CREATE INDEX idx_hospital ON daily_observations(absence_period);
 
 CREATE TABLE extraction_meta (
     key TEXT PRIMARY KEY,
@@ -204,9 +204,9 @@ SoC and temperature values are stored as **REAL** with 1 decimal place of precis
 
 ## Special period flags
 
-### Hospital period
+### Absence period
 
-Rows where `2025-09-28 ≤ date ≤ 2025-11-03` get `hospital_period = 1`. All other rows: `0`. Consumption during this period is abnormal (occupant absent) and should be excluded from model training, but rows are kept in the dataset for completeness.
+Rows where `2025-09-28 ≤ date ≤ 2025-11-03` get `absence_period = 1`. All other rows: `0`. Consumption during this period is abnormal (occupant absent) and should be excluded from model training, but rows are kept in the dataset for completeness.
 
 ### Curtailment likely
 
@@ -239,7 +239,7 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | Column                         | Expected                                     |
 | ------------------------------ | -------------------------------------------- |
 | `provider`                     | `amber`                                      |
-| `hospital_period`              | 0                                            |
+| `absence_period`               | 0                                            |
 | `guests`                       | NULL (sensor doesn't exist until 2026-03-08) |
 | `soc_at_6pm`                   | 100.0                                        |
 | `min_soc_overnight`            | 73.9                                         |
@@ -270,7 +270,7 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | Column                         | Expected |
 | ------------------------------ | -------- |
 | `provider`                     | `amber`  |
-| `hospital_period`              | 0        |
+| `absence_period`               | 0        |
 | `guests`                       | 0        |
 | `soc_at_6pm`                   | 63.2     |
 | `min_soc_overnight`            | 20.0     |
@@ -301,7 +301,7 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | Column                         | Expected                        |
 | ------------------------------ | ------------------------------- |
 | `provider`                     | `ea`                            |
-| `hospital_period`              | 0                               |
+| `absence_period`               | 0                               |
 | `guests`                       | NULL (sensor doesn't exist yet) |
 | `soc_at_6pm`                   | 58.7                            |
 | `min_soc_overnight`            | 6.5                             |
@@ -335,7 +335,7 @@ These three samples cover both DST regimes (AEST and AEDT), both providers activ
 | ------------------------------------------ | ------------------------------------------------------------------------------------ |
 | Before 2023-11-27                          | No data; skip                                                                        |
 | 2023-11-28 → first available date          | First complete window                                                                |
-| Hospital period (2025-09-28 to 2025-11-03) | Flagged but not excluded                                                             |
+| Absence period (2025-09-28 to 2025-11-03)  | Flagged but not excluded                                                             |
 | Before 2026-03-08                          | `guests` is NULL                                                                     |
 | 2026-03-08 onwards                         | `guests = 1` only on **2026-04-17** (the one positive case in the validation period) |
 | Today                                      | Skipped (window incomplete)                                                          |

@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS daily_observations (
     date TEXT PRIMARY KEY,                  -- 'YYYY-MM-DD' (the 11am-endpoint date)
     provider TEXT NOT NULL,                 -- 'ea' | 'amber' | 'globird'
     guests INTEGER,                         -- 0/1, NULL if before 2026-03-08
-    hospital_period INTEGER NOT NULL,       -- 0/1
+    absence_period INTEGER NOT NULL,       -- 0/1
 
     soc_at_6pm REAL,                        -- %
     min_soc_overnight REAL,                 -- %
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS daily_observations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_provider ON daily_observations(provider);
-CREATE INDEX IF NOT EXISTS idx_hospital ON daily_observations(hospital_period);
+CREATE INDEX IF NOT EXISTS idx_absence ON daily_observations(absence_period);
 
 CREATE TABLE IF NOT EXISTS extraction_meta (
     key TEXT PRIMARY KEY,

@@ -53,7 +53,7 @@ This script must:
 3. Copy all existing data: `INSERT INTO daily_observations_new SELECT *, NULL, NULL, ..., NULL FROM daily_observations`
 4. Drop old table: `DROP TABLE daily_observations`
 5. Rename: `ALTER TABLE daily_observations_new RENAME TO daily_observations`
-6. Recreate indexes (`idx_provider`, `idx_hospital`)
+6. Recreate indexes (`idx_provider`, `idx_absence`)
 7. Update `extraction_meta` SET `value = '1.1.0'` WHERE `key = 'schema_version'`
 
 ### 2. Update `src/schema.sql`

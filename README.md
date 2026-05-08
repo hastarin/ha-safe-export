@@ -206,6 +206,38 @@ start tools\predictor.html
 
 Sliders for temp, Solcast forecast, humidity, SOC, and confidence level update the result in real time. The humidity input is only active in the cooling zone (>21°C); the Solcast input is only active in the heating zone (<19°C).
 
+## Node-RED automation
+
+[`tools/nodered-flow.json`](tools/nodered-flow.json) is a ready-to-import Node-RED flow that runs the predictor automatically at 6pm each day and writes the results back to Home Assistant helpers.
+
+### How it works
+
+1. Triggers at 6pm (plus a manual trigger button for testing)
+2. Reads five HA sensors in sequence: overnight forecast temp, humidity, Solcast tomorrow, battery SOC, and min SOC cutoff
+3. Runs the three-zone linear model in a function node (no Python needed — coefficients are embedded as JS constants)
+4. Writes results to two HA helpers:
+   - `input_number.safe_export_kwh` — P90 export value, suitable for dashboard tiles and automations
+   - `input_text.safe_export_detail` — compact JSON with all four confidence levels (P50/P75/P90/P95), zone, temp, SOC, available kWh, and timestamp
+
+### Installation
+
+**1. Create the HA helpers** (Settings → Devices & Services → Helpers):
+
+| Type   | Entity ID            | Min            | Max | Step |
+| ------ | -------------------- | -------------- | --- | ---- |
+| Number | `safe_export_kwh`    | 0              | 14  | 0.01 |
+| Text   | `safe_export_detail` | max length 255 | —   | —    |
+
+**2. Import the flow** in Node-RED: hamburger menu → Import → paste the contents of `tools/nodered-flow.json`.
+
+**3. Set the HA server** on each node (they'll show as unconfigured until you select your Home Assistant connection).
+
+**4. Deploy and test** using the Manual trigger button. Check the debug sidebar for the full result object.
+
+### Updating the model
+
+When you retrain (every few months), only the constants at the top of the "Three-zone linear model" function node need updating — the eight coefficient values (`b0`, `b1`, `b2` for heating and cooling zones, the four `MILD` percentile values, and the two P95 buffer values).
+
 ## Manual prediction at 6pm
 
 Read the values from HA and call `predict()` from the command line:

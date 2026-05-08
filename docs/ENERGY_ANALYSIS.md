@@ -2,7 +2,7 @@
 
 ## Overview
 
-Analysis of 845 non-hospital nights of energy consumption data to build predictive models for overnight HVAC load and grid import requirements. The goal is to predict consumption accurately enough to make daily export decisions during evening peak periods while maintaining safe battery reserves.
+Analysis of 845 non-absence nights of energy consumption data to build predictive models for overnight HVAC load and grid import requirements. The goal is to predict consumption accurately enough to make daily export decisions during evening peak periods while maintaining safe battery reserves.
 
 ## Key Findings
 
@@ -91,7 +91,7 @@ Instead of one model, use three separate models optimized for each thermal regim
 ### Overall Dataset
 
 - **Total nights:** 882
-- **Non-hospital nights:** 845 (37 hospital nights excluded — HVAC off, ~3 kWh baseline)
+- **Non-absence nights:** 845 (37 absence nights excluded — HVAC off, ~3 kWh baseline)
 - **Date range:** Nov 29, 2023 to May 4, 2026
 - **Summer coverage (heating irrelevant):** Excluded from analysis
 
@@ -113,9 +113,9 @@ Instead of one model, use three separate models optimized for each thermal regim
 - **Not yet captured** — needs to be added going forward
 - **Worth adding because:** Humidity is the second-order variable that explains cooling model variance once you have multi-year data
 
-## Hospital Period Baseline
+## Absence Period Baseline
 
-37 nights when the user was in hospital (HVAC off, minimal occupancy):
+37 nights with the home unoccupied (HVAC off, minimal occupancy):
 
 - **Average consumption:** 3.08 kWh
 - **Range:** -1.01 to 8.81 kWh
@@ -217,10 +217,10 @@ error_buffer_kwh = 3.59  # P95 confidence
 
 ## Data Quality Notes
 
-- **Negative consumption values:** A few (~3 instances) appear in hospital period. Likely data collection artifacts or solar export being counted as negative import. Don't worry about these for modelling.
+- **Negative consumption values:** A few (~3 instances) appear in absence period. Likely data collection artifacts or solar export being counted as negative import. Don't worry about these for modelling.
 - **Solcast NULL values:** Data only from Oct 2024 onward. Older nights show NULL.
 - **Indoor temp NULL values:** Data only from Jan 2024 onward.
-- **Hospital period excluded:** 37 nights with very different load profile. Keep separate for baseline reference only.
+- **Absence period excluded:** 37 nights with very different load profile. Keep separate for baseline reference only.
 
 ## Files and References
 

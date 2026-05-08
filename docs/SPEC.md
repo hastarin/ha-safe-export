@@ -17,7 +17,7 @@ The model becomes the brain of a Home Assistant automation that, at 6pm each day
 | Heating/cooling | Indoor climate strongly affects overnight load            |
 | Energy provider | Time-varying (`ea` → `amber` → `globird`); see DATASET.md |
 
-The provider is consequential. Under variable-price providers (Amber), the battery's value is to be preserved for high-price evening export. Under flat free-window providers (GloBird, free 11am–2pm), the battery can be more aggressively discharged in the evening because it's guaranteed to be recharged for free the next day.
+The provider is recorded because tariff structure influences consumption behaviour — free overnight charging windows, wholesale price exposure, and flat-rate plans all change how the home is operated, which shifts the underlying load profile. Provider is not used to adjust the model's confidence level or export recommendation; the user selects an appropriate confidence level (P50–P95) for their own risk tolerance. Provider is retained as a stratification variable so per-provider model performance can be evaluated as more data accumulates under each tariff.
 
 ## Prediction objective
 
@@ -93,7 +93,7 @@ The model is judged on three metrics, computed against held-out historical data 
 
 A model that exports nothing has a 0% safety violation rate but is useless. A model that exports the full battery every night maximises short-term revenue but blows past the safety threshold often. The metrics are designed to balance these.
 
-The hospital period (Sep 28 – Nov 3 2025) is excluded from training and from these metric calculations.
+The absence period (Sep 28 – Nov 3 2025) is excluded from training and from these metric calculations.
 
 ## Phase plan
 
