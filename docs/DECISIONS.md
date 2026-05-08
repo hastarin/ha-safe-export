@@ -218,6 +218,15 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 
 **Rationale:** Excluding the rows from the dataset would create gaps that complicate downstream code (e.g. time-series operations). Writing them with a flag preserves chronological completeness while letting the model trainer filter cleanly with `WHERE absence_period = 0`. The data itself remains useful for QA and pattern comparison.
 
+### Flag data gaps; do not delete their rows
+
+**Decision:** Rows with known sensor outages are written with `data_gap = 1` and kept in the dataset. New gaps are added to `DATA_GAP_DATES` in `extract.py` and backfilled via a numbered migration.
+**Status:** Locked.
+
+**Rationale:** Same reasoning as the absence period flag — deleting rows creates chronological gaps that complicate downstream code. A flag lets the model trainer filter cleanly with `WHERE data_gap = 0` while preserving the rows for QA. Hardcoding gap dates in `extract.py` (rather than a config file or DB table) keeps the logic auditable and version-controlled alongside the code that produces the data.
+
+The extraction script detects likely new gaps automatically: a large energy imbalance (>3000 Wh between balance-derived and load-integrated consumption) combined with near-zero battery throughput despite a significant SOC swing, or zero solar before 11am (reliable even in Melbourne mid-winter), triggers a warning and a ±1 day investigation prompt. High-cycling days produce large imbalances without these signatures and are not warned on.
+
 ### Guests column is NULL before 2026-03-08
 
 **Decision:** When the `sensor.hastguests` sensor doesn't yet exist for the row's date, store `guests = NULL`, not 0.

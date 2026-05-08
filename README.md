@@ -108,7 +108,7 @@ The `DECISIONS.md` log is the most important one to consult before changing how 
 
 | Phase                  | Deliverable                                                                                                                          | Status        |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
-| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (v1.2.0, 32 columns); passes three validation fixtures            | **Complete**  |
+| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (v1.3.0, 33 columns); passes three validation fixtures            | **Complete**  |
 | **2. Modelling**       | `src/model.py` — three-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3    | **Complete**  |
 | **3. HA integration**  | HACS-installable custom component; auto-discovers sensors; exposes `sensor.safe_export_wh`                                           | Not started   |
 

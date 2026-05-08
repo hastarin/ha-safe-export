@@ -18,7 +18,19 @@ AMBER_START = date(2025, 8, 16)
 GLOBIRD_START = date(2026, 5, 5)
 ABSENCE_START = date(2025, 9, 28)
 ABSENCE_END = date(2025, 11, 3)
+# Dates with known sensor outages where energy columns are unreliable.
+# Add new dates here when gaps are discovered; check ±1 day around each.
+DATA_GAP_DATES: frozenset[date] = frozenset([
+    date(2026, 2, 22),  # battery sensor template deleted
+    date(2026, 2, 23),  # battery sensor template deleted
+    date(2026, 2, 24),  # battery sensor template deleted
+    date(2026, 5, 5),   # battery sensor template deleted
+    date(2026, 5, 6),   # battery sensor template deleted
+])
 IMBALANCE_WARN_THRESHOLD = 3000
+# Thresholds for data-gap warning heuristics
+_BATTERY_ZERO_THRESHOLD = 500   # Wh — below this is suspicious if SOC swung significantly
+_SOC_SWING_THRESHOLD = 10.0     # % — SOC change that should have registered battery throughput
 
 _SENSOR_IDS = {
     "byd_soc": "sensor.byd_battery_box_premium_hv_state_of_charge",
@@ -73,6 +85,10 @@ def _provider(d: date) -> str:
 
 def _absence(d: date) -> int:
     return 1 if ABSENCE_START <= d <= ABSENCE_END else 0
+
+
+def _data_gap(d: date) -> int:
+    return 1 if d in DATA_GAP_DATES else 0
 
 
 def _cum_delta(
@@ -258,16 +274,11 @@ def extract_row(
 
     curtailment_likely = 1 if (max_soc_prev_daylight is not None and max_soc_prev_daylight >= 99) else 0
 
+    large_imbalance: int | None = None
     if consumption_wh_load is not None:
         imbalance = consumption_wh_load - consumption_wh
         if abs(imbalance) > IMBALANCE_WARN_THRESHOLD:
-            log.warning(
-                "Large energy imbalance for %s: %+d Wh (load=%d, balance=%d)",
-                date_str,
-                imbalance,
-                consumption_wh_load,
-                consumption_wh,
-            )
+            large_imbalance = imbalance
 
     now_utc = datetime.now(timezone.utc).isoformat()
     return {
@@ -275,6 +286,7 @@ def extract_row(
         "provider": _provider(morning_date),
         "guests": guests,
         "absence_period": _absence(morning_date),
+        "data_gap": _data_gap(morning_date),
         "soc_at_6pm": soc_at_6pm,
         "min_soc_overnight": min_soc_overnight,
         "max_soc_prev_daylight": max_soc_prev_daylight,
@@ -303,6 +315,7 @@ def extract_row(
         "curtailment_likely": curtailment_likely,
         "extracted_at": now_utc,
         "extraction_version": __version__,
+        "_large_imbalance": large_imbalance,  # None or int; used by extract_all, not written to DB
     }
 
 
@@ -358,6 +371,7 @@ def extract_all(
     log.info("Extracting %s → %s", start, yesterday)
 
     inserted = replaced = skipped = 0
+    gap_warnings: list[str] = []
     current = start
     while current <= yesterday:
         date_str = current.isoformat()
@@ -368,6 +382,26 @@ def extract_all(
             current += timedelta(days=1)
             continue
 
+        imbalance = row_data.pop("_large_imbalance")
+        if imbalance is not None:
+            soc_swing = abs((row_data.get("soc_at_6pm") or 0) - (row_data.get("soc_at_11am") or 0))
+            battery_zero = (
+                (row_data.get("battery_charged_wh") or 0) < _BATTERY_ZERO_THRESHOLD
+                and (row_data.get("battery_discharged_wh") or 0) < _BATTERY_ZERO_THRESHOLD
+                and soc_swing > _SOC_SWING_THRESHOLD
+            )
+            solar_zero = (row_data.get("solar_wh_before_11am") or 0) == 0
+            if battery_zero or solar_zero:
+                reason = "near-zero battery throughput despite SOC swing" if battery_zero else "zero solar"
+                log.warning(
+                    "Possible data gap on %s: large imbalance (%+d Wh) with %s"
+                    " — check this date and ±1 day in HA",
+                    date_str,
+                    imbalance,
+                    reason,
+                )
+                gap_warnings.append(date_str)
+
         existing = ds.execute(
             "SELECT 1 FROM daily_observations WHERE date = ?", (date_str,)
         ).fetchone()
@@ -375,7 +409,7 @@ def extract_all(
         ds.execute(
             """
             INSERT OR REPLACE INTO daily_observations (
-                date, provider, guests, absence_period,
+                date, provider, guests, absence_period, data_gap,
                 soc_at_6pm, min_soc_overnight, max_soc_prev_daylight, soc_at_11am,
                 min_outdoor_temp, avg_indoor_temp,
                 bom_temp_min, bom_temp_mean, bom_feels_like_min, bom_rain_max,
@@ -386,7 +420,7 @@ def extract_all(
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
                 curtailment_likely, extracted_at, extraction_version
             ) VALUES (
-                :date, :provider, :guests, :absence_period,
+                :date, :provider, :guests, :absence_period, :data_gap,
                 :soc_at_6pm, :min_soc_overnight, :max_soc_prev_daylight, :soc_at_11am,
                 :min_outdoor_temp, :avg_indoor_temp,
                 :bom_temp_min, :bom_temp_mean, :bom_feels_like_min, :bom_rain_max,
@@ -413,7 +447,7 @@ def extract_all(
 
     now_utc = datetime.now(timezone.utc).isoformat()
     for key, value in [
-        ("schema_version", "1.2.0"),
+        ("schema_version", "1.3.0"),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
         ("globird_start_date", "2026-05-05"),
@@ -425,6 +459,12 @@ def extract_all(
     ds.commit()
 
     log.info("Done — inserted %d, replaced %d, skipped %d", inserted, replaced, skipped)
+    if gap_warnings:
+        log.warning(
+            "%d possible data gap(s) detected: %s — also check the day before and after each.",
+            len(gap_warnings),
+            ", ".join(gap_warnings),
+        )
 
     ha.close()
     ds.close()

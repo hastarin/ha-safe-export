@@ -108,7 +108,8 @@ CREATE TABLE daily_observations (
     date TEXT PRIMARY KEY,                  -- 'YYYY-MM-DD' (the 11am-endpoint date)
     provider TEXT NOT NULL,                 -- 'ea' | 'amber' | 'globird'
     guests INTEGER,                         -- 0/1, NULL if before 2026-03-08
-    absence_period INTEGER NOT NULL,       -- 0/1
+    absence_period INTEGER NOT NULL,        -- 0/1
+    data_gap INTEGER NOT NULL DEFAULT 0,   -- 0/1: known sensor outage; energy columns unreliable
 
     soc_at_6pm REAL,                        -- %
     min_soc_overnight REAL,                 -- %
@@ -146,7 +147,8 @@ CREATE TABLE daily_observations (
 );
 
 CREATE INDEX idx_provider ON daily_observations(provider);
-CREATE INDEX idx_hospital ON daily_observations(absence_period);
+CREATE INDEX idx_absence ON daily_observations(absence_period);
+CREATE INDEX idx_data_gap ON daily_observations(data_gap);
 
 CREATE TABLE extraction_meta (
     key TEXT PRIMARY KEY,
@@ -207,6 +209,19 @@ SoC and temperature values are stored as **REAL** with 1 decimal place of precis
 ### Absence period
 
 Rows where `2025-09-28 ≤ date ≤ 2025-11-03` get `absence_period = 1`. All other rows: `0`. Consumption during this period is abnormal (occupant absent) and should be excluded from model training, but rows are kept in the dataset for completeness.
+
+### Data gap
+
+`data_gap = 1` marks rows where a known sensor outage makes the energy columns unreliable. The rows are kept in the dataset for chronological completeness but must be excluded from model training (`WHERE data_gap = 0`).
+
+Known gaps:
+
+| Period | Dates | Cause |
+| ------ | ----- | ----- |
+| Feb 2026 | 2026-02-22 to 2026-02-24 | Battery sensor template accidentally deleted |
+| May 2026 | 2026-05-05 to 2026-05-06 | Battery sensor template accidentally deleted |
+
+New gaps are added to `DATA_GAP_DATES` in `extract.py` and backfilled via a migration. The extraction script warns when a large energy imbalance coincides with near-zero battery throughput (despite a significant SOC swing) or zero solar before 11am — both are reliable indicators of missing sensor data rather than normal integration noise.
 
 ### Curtailment likely
 
@@ -335,7 +350,8 @@ These three samples cover both DST regimes (AEST and AEDT), both providers activ
 | ------------------------------------------ | ------------------------------------------------------------------------------------ |
 | Before 2023-11-27                          | No data; skip                                                                        |
 | 2023-11-28 → first available date          | First complete window                                                                |
-| Absence period (2025-09-28 to 2025-11-03)  | Flagged but not excluded                                                             |
+| Absence period (2025-09-28 to 2025-11-03)  | Flagged but not excluded (`absence_period = 1`)                                      |
+| Data gap periods (see § Data gap above)    | Flagged but not excluded (`data_gap = 1`); energy columns unreliable                 |
 | Before 2026-03-08                          | `guests` is NULL                                                                     |
 | 2026-03-08 onwards                         | `guests = 1` only on **2026-04-17** (the one positive case in the validation period) |
 | Today                                      | Skipped (window incomplete)                                                          |
