@@ -216,17 +216,17 @@ Sliders for temp, Solcast forecast, humidity, SOC, and confidence level update t
 2. Reads five HA sensors in sequence: overnight forecast temp, humidity, Solcast tomorrow, battery SOC, and min SOC cutoff
 3. Runs the three-zone linear model in a function node (no Python needed — coefficients are embedded as JS constants)
 4. Writes results to two HA helpers:
-   - `input_number.safe_export_kwh` — P90 export value, suitable for dashboard tiles and automations
-   - `input_text.safe_export_detail` — compact JSON with all four confidence levels (P50/P75/P90/P95), zone, temp, SOC, available kWh, and timestamp
+   - `input_number.safe_export_wh` — P90 safe export in **Wh** (integer). Use this directly as a W export limit for a 1-hour window, or divide by 3 to spread over 3 hours.
+   - `input_text.safe_export_detail` — compact JSON with all four confidence levels and context. All `p50`/`p75`/`p90`/`p95` values in the JSON are **Wh**; `avail_kwh` is kWh. Internal model fields (`consumption`, `buffer`, `total_needed`, `grid_needed`) are kWh.
 
 ### Installation
 
 **1. Create the HA helpers** (Settings → Devices & Services → Helpers):
 
-| Type   | Entity ID            | Min            | Max | Step |
-| ------ | -------------------- | -------------- | --- | ---- |
-| Number | `safe_export_kwh`    | 0              | 14  | 0.01 |
-| Text   | `safe_export_detail` | max length 255 | —   | —    |
+| Type   | Entity ID            | Min | Max   | Step | Unit           |
+| ------ | -------------------- | --- | ----- | ---- | -------------- |
+| Number | `safe_export_wh`     | 0   | 13800 | 1    | Wh             |
+| Text   | `safe_export_detail` | —   | —     | —    | max length 255 |
 
 **2. Import the flow** in Node-RED: hamburger menu → Import → paste the contents of `tools/nodered-flow.json`.
 
