@@ -344,7 +344,9 @@ print(result.reasoning)
 
 ## Contributing
 
-This is currently a personal infrastructure project. If you've stumbled across it and have a similar setup (home battery + solar + smart meter), feel free to open an issue — the approach and design docs may already be useful to you even if your hardware differs.
+This is a personal infrastructure project built heavily with [Claude AI](https://claude.ai/code). The design docs (`DECISIONS.md`, `DATASET.md`, `SPEC.md`) and the `CLAUDE.md` standing instructions are written so that an AI agent can pick up the codebase cold — if you fork this and want to adapt it to your own hardware, that's the intended path.
+
+Issues are unlikely to get personal attention. If something is broken or unclear, your best bet is to fork, use Claude Code (or similar) to work through the adaptation, and iterate from there. Pull requests that fix bugs or improve the documentation are welcome, but support requests for getting it running on different hardware won't be addressed.
 
 ## License
 
