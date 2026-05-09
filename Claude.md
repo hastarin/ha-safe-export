@@ -17,6 +17,7 @@ Phase 3 (Home Assistant integration) comes after Phase 2. The dataset DB is the 
 - `docs/SPEC.md` — what we're predicting and the success criteria
 - `docs/DATASET.md` — **the canonical data spec.** Sensor mappings, window definitions, column formulas, validation samples
 - `docs/DECISIONS.md` — why each design choice was made (do not "improve" these without strong justification and discussion)
+- `docs/analysis/` — background analysis docs useful for modelling context: `ENERGY_ANALYSIS.md` (three-zone model selection rationale, statistical findings) and `PHASE_1_SCHEMA_UPDATE.md` (sensor coverage and schema evolution log)
 
 ## Critical gotchas
 

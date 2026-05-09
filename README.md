@@ -77,7 +77,8 @@ ha-safe-export/
 ├── docs/
 │   ├── SPEC.md           ← Project specification: prediction objective, success criteria
 │   ├── DATASET.md        ← Data contract: schema, sensors, formulas, validation samples
-│   └── DECISIONS.md      ← Rationale log for design choices (read before changing them)
+│   ├── DECISIONS.md      ← Rationale log for design choices (read before changing them)
+│   └── analysis/         ← Background analysis docs (model selection, schema evolution)
 ├── src/
 │   ├── extract.py        ← Builds and refreshes the dataset (Phase 1)
 │   ├── schema.sql        ← Canonical DDL for the dataset DB
@@ -237,6 +238,55 @@ Sliders for temp, Solcast forecast, humidity, SOC, and confidence level update t
 ### Updating the model
 
 When you retrain (every few months), only the constants at the top of the "Three-zone linear model" function node need updating — the eight coefficient values (`b0`, `b1`, `b2` for heating and cooling zones, the four `MILD` percentile values, and the two P95 buffer values).
+
+### Exposing the result as an HA sensor
+
+The Node-RED flow writes the result to `input_text.safe_export_detail`. You can expose this as a proper HA sensor with full attribute support using a template sensor in your `configuration.yaml`:
+
+```yaml
+template:
+  - sensor:
+      - name: "Overnight Forecast Safe Power Export"
+        unique_id: overnight_forecast_safe_power_export
+        unit_of_measurement: "Wh"
+        device_class: energy
+        state_class: measurement
+        variables:
+          j: "{{ states('input_text.safe_export_detail') | from_json }}"
+        state: "{{ j.p75 if j and j.p75 is defined else 0 }}"
+        attributes:
+          zone: "{{ j.zone if j and j.zone is defined else none }}"
+          temp: "{{ j.temp if j and j.temp is defined else none }}"
+          soc: "{{ j.soc if j and j.soc is defined else none }}"
+          avail_kwh: "{{ j.avail_kwh if j and j.avail_kwh is defined else none }}"
+          p50: "{{ j.p50 if j and j.p50 is defined else none }}"
+          p75: "{{ j.p75 if j and j.p75 is defined else none }}"
+          p90: "{{ j.p90 if j and j.p90 is defined else none }}"
+          p95: "{{ j.p95 if j and j.p95 is defined else none }}"
+          at: "{{ j.at if j and j.at is defined else none }}"
+```
+
+The sensor's state is P75 (a reasonable default for most nights). All four confidence levels and the full prediction context are available as attributes. Change `j.p75` in the `state:` line to `j.p90` if you prefer a more conservative default.
+
+A tile card that surfaces all four confidence levels at once:
+
+```yaml
+type: tile
+grid_options:
+  columns: full
+entity: sensor.overnight_forecast_safe_power_export
+name: Safe Export Wh
+icon: mdi:chart-bell-curve
+show_entity_picture: false
+hide_state: false
+state_content:
+  - p50
+  - p75
+  - p90
+  - p95
+vertical: false
+features_position: bottom
+```
 
 ## Manual prediction at 6pm
 
