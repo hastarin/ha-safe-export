@@ -1,0 +1,93 @@
+# ha-safe-export configuration
+# Copy this file to config/config.yaml and fill in your values.
+# config/config.yaml is gitignored — it contains your personal sensor names and history.
+
+battery:
+  capacity_wh: 10000         # Total usable capacity of your battery in Wh
+  reserve_fraction: 0.10     # Default minimum SoC floor passed to predict() (0.10 = 10%);
+                             # can be overridden at call time (e.g. 0.20 in storm mode)
+
+timezone: "Australia/Melbourne"   # Your local timezone (any IANA zone string)
+
+sensors:
+  # Core energy sensors (all required)
+  battery_soc: "sensor.your_battery_state_of_charge"      # % (mean per bucket)
+  pv: "sensor.your_pv_power"                              # W instantaneous (mean per bucket)
+  load: "sensor.your_load_power"                          # W, sign-negative consumption
+  grid_import: "sensor.your_grid_import_energy"           # Wh cumulative (use sum column)
+  grid_export: "sensor.your_grid_export_energy"           # Wh cumulative (use sum column)
+  battery_charged: "sensor.your_battery_energy_charged"   # Wh cumulative (use sum column)
+  battery_discharged: "sensor.your_battery_energy_discharged"  # Wh cumulative (use sum column)
+
+  # Temperature sensors (required)
+  outdoor_temp: "sensor.your_outdoor_temperature"         # °C
+  indoor_temp: "sensor.your_indoor_temperature"           # °C
+
+  # External weather station sensors (required — any BOM/weather integration)
+  weather_temp: "sensor.your_weather_station_temp"
+  weather_feels_like: "sensor.your_weather_station_feels_like"
+  weather_rain: "sensor.your_weather_station_rain_since_9am"   # mm, stored in state column
+  weather_wind: "sensor.your_weather_station_wind_speed"       # km/h
+  weather_gust: "sensor.your_weather_station_gust_speed"       # km/h
+  weather_humidity: "sensor.your_weather_station_humidity"     # %
+
+  # Optional sensors (set to null or omit if unavailable)
+  solcast: "sensor.solcast_pv_forecast_forecast_tomorrow"  # kWh, stored in state column
+  guests: null            # Number-of-guests sensor; stored for future model use; set to null if unused
+  median_temp: null       # Multi-room median temperature; null if you only have one temp sensor
+  median_humidity: null   # Multi-room median humidity; null if unavailable
+
+providers:
+  # List your energy providers in chronological order, earliest first.
+  # 'name' is a short string identifier (any value; used to label dataset rows).
+  # 'start_date' is the first date on that provider (YYYY-MM-DD).
+  - name: "provider_a"
+    start_date: "2023-01-01"
+  # - name: "provider_b"
+  #   start_date: "2024-06-01"
+
+absence_periods:
+  # Date ranges (inclusive) when the home was unoccupied.
+  # Rows in these ranges get absence_period=1 and are excluded from model training.
+  # - start: "2024-09-01"
+  #   end: "2024-10-15"
+
+data_gap_dates:
+  # Individual dates with known sensor outages where energy columns are unreliable.
+  # Rows on these dates get data_gap=1 and are excluded from model training.
+  # - "2024-03-15"
+
+model:
+  # Linear regression coefficients. Update these after each retraining run.
+  # The values below are placeholders — replace with your fitted coefficients.
+  #
+  # Heating zone (overnight mean temp < 19°C):
+  #   consumption_kwh = heating_intercept + heating_b_temp * temp + heating_b_solcast * solcast_kwh
+  heating_intercept: 19.7258
+  heating_b_temp: -0.7756
+  heating_b_solcast: -0.070291
+
+  # Heating zone fallback (when Solcast forecast is unavailable):
+  #   consumption_kwh = heating_temp_only_intercept + heating_temp_only_b_temp * temp
+  heating_temp_only_intercept: 18.8039
+  heating_temp_only_b_temp: -0.8614
+
+  # Cooling zone (overnight mean temp > 21°C):
+  #   consumption_kwh = cooling_intercept + cooling_b_temp * temp + cooling_b_humidity * humidity_pct
+  cooling_intercept: -13.4046
+  cooling_b_temp: 0.7231
+  cooling_b_humidity: 0.059498
+
+  # Cooling zone fallback (when humidity is unavailable):
+  cooling_temp_only_intercept: -6.756
+  cooling_temp_only_b_temp: 0.660
+
+  # Mild zone (19°C ≤ temp ≤ 21°C): empirical percentile table (kWh)
+  mild_p50: 4.601
+  mild_p75: 6.583
+  mild_p90: 7.829
+  mild_p95: 8.425
+
+  # P95 absolute residual buffers (kWh) — covers ~92% of held-out test errors
+  heating_p95_buffer_kwh: 3.562
+  cooling_p95_buffer_kwh: 3.136

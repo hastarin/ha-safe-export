@@ -4,7 +4,7 @@
 
 You are working on a system that predicts how much energy can be safely exported from a home battery during the 6–9pm peak period each evening, while ensuring sufficient charge remains to carry the home through to 11am the following day.
 
-The home setup: BYD Battery-Box Premium HV (13.8 kWh, 10% reserve), Fronius solar, Australian residential grid, located in Melbourne (Australia/Melbourne timezone).
+Installation-specific configuration (battery capacity, sensor names, provider history, absence periods) lives in `config/config.yaml` (gitignored). The example template is `config/config.example.yaml`.
 
 ## Current phase
 
@@ -26,11 +26,11 @@ These will cost hours to rediscover. Trust them.
 
 The `start_ts` column in `statistics` is Unix UTC. SQLite's `datetime(ts, 'unixepoch', 'localtime')` modifier silently does nothing because the HA system is configured to UTC. **All window boundaries must be computed in Australian local time and converted to UTC explicitly.**
 
-Use `zoneinfo.ZoneInfo("Australia/Melbourne")`. Do not hardcode UTC offsets — DST transitions on the first Sunday of October (AEST→AEDT) and first Sunday of April (AEDT→AEST), and you will get this wrong if you assume one or the other.
+Use the timezone from `config.yaml` via `cfg.timezone` (a `ZoneInfo` object). Do not hardcode UTC offsets — DST transitions vary by location and you will get this wrong if you assume one or the other.
 
-### 2. Don't trust `sensor.solarnet_power_load_consumed`
+### 2. Don't trust the consumed-power sensor if it has a short history
 
-It only goes back to July 2024. Use `sensor.solarnet_power_load` instead — same underlying measurement, sign-flipped (consumption is stored as negative), but available from system commissioning in November 2023. Apply `ABS(mean)` to recover the magnitude.
+The `solarnet_power_load_consumed` sensor only goes back to July 2024. The config uses `solarnet_power_load` instead — same underlying measurement, sign-flipped (consumption is stored as negative), available from system commissioning. Apply `ABS(mean)` to recover the magnitude.
 
 ### 3. Don't compute consumption from integrated power
 
@@ -43,9 +43,9 @@ consumption_wh = solar_wh + grid_import_wh + battery_discharged_wh
 
 This is what the HA Energy Dashboard does internally. Keep the integrated value as `consumption_wh_load` in a separate column for QA only.
 
-### 4. Don't use `sensor.solar_power`
+### 4. Use the PV-only sensor, not the inverter output sensor
 
-Despite the name, this includes battery discharge, not pure PV. Use `sensor.solarnet_power_photovoltaics` (instantaneous W; integrate `MAX(mean, 0) × 1h` to get Wh).
+On Fronius systems, `sensor.solar_power` includes battery discharge — not pure PV. The config uses `sensor.solarnet_power_photovoltaics` (instantaneous W; integrate `MAX(mean, 0) × 1h` to get Wh). Check the equivalent on other inverter brands.
 
 ### 5. Cumulative-sum sensors: use `sum`, not `state`
 
@@ -73,19 +73,26 @@ A passing run of `pytest` is the bar for any change to extraction logic.
 ha-safe-export/
 ├── CLAUDE.md
 ├── README.md
+├── config/
+│   ├── config.example.yaml  # template — copy to config.yaml and fill in your values
+│   └── config.yaml          # gitignored; your actual sensor names and history
 ├── docs/
 │   ├── SPEC.md
 │   ├── DATASET.md
 │   └── DECISIONS.md
 ├── src/
 │   ├── __init__.py      # defines __version__
+│   ├── config.py        # Config dataclass + load_config()
 │   ├── extract.py       # build/refresh the dataset DB
 │   ├── schema.sql       # canonical DDL for the dataset DB
+│   ├── model.py         # three-zone predictor + predict()
 │   └── windows.py       # timezone-aware window math
 ├── tests/
 │   ├── __init__.py
+│   ├── conftest.py      # shared test fixtures (test Config)
 │   ├── fixtures.py      # expected values from DATASET.md
-│   └── test_extract.py
+│   ├── test_extract.py
+│   └── test_model.py
 ├── data/                # gitignored; holds the dataset DB
 └── pyproject.toml
 ```
@@ -111,4 +118,4 @@ Don't make these changes without discussion:
 - Adding new "convenience" columns or features that weren't asked for
 - Changing the window boundaries
 
-If a sensor in the user's HA DB is missing or has a different name, surface a clear error rather than silently substituting.
+Sensor names come from `config.yaml` — never hardcode them. If a configured sensor is not found in the HA DB, surface a clear error rather than silently substituting.

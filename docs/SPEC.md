@@ -10,14 +10,14 @@ The model becomes the brain of a Home Assistant automation that, at 6pm each day
 
 | Component       | Detail                                                    |
 | --------------- | --------------------------------------------------------- |
-| Battery         | BYD Battery-Box Premium HV, 13.8 kWh capacity             |
-| Reserve         | 10% of capacity (1.38 kWh) held back as floor             |
-| Solar           | Fronius inverter (~6 kW system, exact size TBD)           |
-| Location        | Melbourne, Australia (Australia/Melbourne TZ)             |
-| Heating/cooling | Indoor climate strongly affects overnight load            |
-| Energy provider | Time-varying (`ea` → `amber` → `globird`); see DATASET.md |
+| Battery         | Configured in `config.yaml` (`battery.capacity_wh`, `battery.reserve_fraction`) |
+| Reserve         | Configurable floor (default 10%)                                                 |
+| Solar           | Any inverter with HA statistics integration                                      |
+| Location        | Configured timezone in `config.yaml`                                             |
+| Heating/cooling | Indoor climate strongly affects overnight load                                   |
+| Energy provider | Time-varying; periods configured in `config.yaml`; see DATASET.md               |
 
-The provider is recorded because tariff structure influences consumption behaviour — free overnight charging windows, wholesale price exposure, and flat-rate plans all change how the home is operated, which shifts the underlying load profile. Provider is not used to adjust the model's confidence level or export recommendation; the user selects an appropriate confidence level (P50–P95) for their own risk tolerance. Provider is retained as a stratification variable so per-provider model performance can be evaluated as more data accumulates under each tariff.
+The provider is recorded in the dataset because tariff structure influences consumption behaviour — free overnight charging windows, wholesale price exposure, and flat-rate plans all change how the home is operated, which shifts the underlying load profile. Provider is not currently used in the `predict()` function; the user selects an appropriate confidence level (P50–P95) for their own risk tolerance. Provider is retained as a stratification variable so per-provider model performance can be evaluated as more data accumulates under each tariff.
 
 ## Prediction objective
 
@@ -75,8 +75,8 @@ The training dataset uses _actuals_ for these. At inference time, the system nee
 | Predicted solar 6pm–11am              | computed from `solarnet_power_photovoltaics` history | `sensor.solcast_pv_forecast_forecast_today` + `forecast_tomorrow` |
 | Predicted outdoor temperature profile | `sensor.netatmo_outdoor_temperature` history         | weather forecast integration (e.g. Met.no, BOM)                   |
 | Indoor climate state                  | `sensor.netatmo_indoor_temperature`                  | live HA state                                                     |
-| Guests overnight flag                 | `sensor.hastguests`                                  | `input_boolean.guests` (live)                                     |
-| Provider                              | derived from row date                                | derived from current date / config                                |
+| Guests overnight flag                 | configured in `config.yaml` (`sensors.guests`)       | live HA sensor (configured in `config.yaml`)                      |
+| Provider                              | derived from row date via `config.yaml`              | derived from current date / `config.yaml`                         |
 | Calendar features                     | row date                                             | inference time                                                    |
 
 The Solcast and weather forecasts feed both the model and (for evaluation) the comparison between predicted-with-forecast and predicted-with-actual.
@@ -93,7 +93,7 @@ The model is judged on three metrics, computed against held-out historical data 
 
 A model that exports nothing has a 0% safety violation rate but is useless. A model that exports the full battery every night maximises short-term revenue but blows past the safety threshold often. The metrics are designed to balance these.
 
-The absence period (Sep 28 – Nov 3 2025) is excluded from training and from these metric calculations.
+Configured absence periods are excluded from training and from these metric calculations.
 
 ## Phase plan
 

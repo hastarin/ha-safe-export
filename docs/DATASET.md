@@ -58,18 +58,22 @@ window_energy = sum_at(start_ts = 11:00 row date) − sum_at(start_ts = 18:00 pr
 | Battery discharged (cumulative) | `sensor.battery_energy_discharged`                  | Wh           | delta of `sum`                    | 2023-11-27     |
 | Outdoor temperature             | `sensor.netatmo_outdoor_temperature`                | °C           | `min` / `mean` per bucket         | (≥ 2023-11-27) |
 | Indoor temperature              | `sensor.netatmo_indoor_temperature`                 | °C           | `mean` per bucket                 | (≥ 2023-11-27) |
-| Guests overnight                | `sensor.hastguests`                                 | bool-as-num  | `MAX(mean) over window > 0.5 → 1` | 2026-03-08     |
+| Guests overnight                | configured in `config.yaml` (`sensors.guests`)      | number       | `MAX(mean) over window > 0.5 → 1` | varies         |
 
-### BOM weather station (Laverton)
+Note: the guests column is not yet used by the model — it is stored for future use.
 
-| Purpose         | Sensor                                 | Native unit | Method                                            | Available from |
-| --------------- | -------------------------------------- | ----------- | ------------------------------------------------- | -------------- |
-| Temperature     | `sensor.laverton_temp`                 | °C          | `MIN(min)` / `AVG(mean)` / `MAX(max)` over window | 2023-04-12     |
-| Feels-like temp | `sensor.laverton_temp_feels_like`      | °C          | `MIN(min)` over window                            | 2023-04-12     |
-| Rain since 9am  | `sensor.laverton_rain_since_9am`       | mm          | `MAX(CAST(state AS REAL))` over window            | 2023-04-12     |
-| Wind speed      | `sensor.laverton_wind_speed_kilometre` | km/h        | `AVG(mean)` over window                           | 2023-04-12     |
-| Gust speed      | `sensor.laverton_gust_speed_kilometre` | km/h        | `MAX(max)` over window                            | 2023-04-12     |
-| Humidity        | `sensor.laverton_humidity`             | %           | `AVG(mean)` / `MAX(max)` over window              | 2023-04-12     |
+### External weather station
+
+Configure your weather station sensors in `config.yaml` under `sensors.weather_*`. Any HA weather integration providing the sensors below works (BOM via Bureau of Meteorology integration, Met.no, etc.).
+
+| Purpose         | Config key               | Native unit | Method                                            |
+| --------------- | ------------------------ | ----------- | ------------------------------------------------- |
+| Temperature     | `sensors.weather_temp`   | °C          | `MIN(min)` / `AVG(mean)` / `MAX(max)` over window |
+| Feels-like temp | `sensors.weather_feels_like` | °C      | `MIN(min)` over window                            |
+| Rain since 9am  | `sensors.weather_rain`   | mm          | `MAX(CAST(state AS REAL))` over window            |
+| Wind speed      | `sensors.weather_wind`   | km/h        | `AVG(mean)` over window                           |
+| Gust speed      | `sensors.weather_gust`   | km/h        | `MAX(max)` over window                            |
+| Humidity        | `sensors.weather_humidity` | %         | `AVG(mean)` / `MAX(max)` over window              |
 
 Note: the rain sensor stores values in `state` only (`mean`/`min`/`max` are NULL in HA statistics). Use `MAX(CAST(state AS REAL))` to get the peak rain gauge reading over the window.
 
@@ -169,17 +173,17 @@ CREATE TABLE extraction_meta (
 | `soc_at_11am`                  | `byd_soc.mean` where `start_ts = 10:00 row date local`                                                |
 | `min_outdoor_temp`             | `MIN(outdoor.min)` over the window                                                                    |
 | `avg_indoor_temp`              | `AVG(indoor.mean)` over the window                                                                    |
-| `bom_temp_min`                 | `MIN(laverton_temp.min)` over the window                                                              |
-| `bom_temp_mean`                | `AVG(laverton_temp.mean)` over the window                                                             |
-| `bom_temp_max`                 | `MAX(laverton_temp.max)` over the window                                                              |
-| `bom_feels_like_min`           | `MIN(laverton_feels_like.min)` over the window                                                        |
-| `bom_rain_max`                 | `MAX(CAST(laverton_rain.state AS REAL))` over the window                                              |
-| `bom_wind_mean`                | `AVG(laverton_wind.mean)` over the window                                                             |
-| `bom_gust_max`                 | `MAX(laverton_gust.max)` over the window                                                              |
+| `bom_temp_min`                 | `MIN(weather_temp.min)` over the window                                                               |
+| `bom_temp_mean`                | `AVG(weather_temp.mean)` over the window                                                              |
+| `bom_temp_max`                 | `MAX(weather_temp.max)` over the window                                                               |
+| `bom_feels_like_min`           | `MIN(weather_feels_like.min)` over the window                                                         |
+| `bom_rain_max`                 | `MAX(CAST(weather_rain.state AS REAL))` over the window                                               |
+| `bom_wind_mean`                | `AVG(weather_wind.mean)` over the window                                                              |
+| `bom_gust_max`                 | `MAX(weather_gust.max)` over the window                                                               |
 | `solcast_forecast_tomorrow_wh` | `int(solcast.state * 1000)` where `start_ts = 17:00 prior day`. **NULL** before 2024-10-17.           |
 | `median_indoor_temp`           | `AVG(median_temperature.mean)` over the window. **NULL** before 2024-01-08.                           |
-| `bom_humidity_mean`            | `AVG(laverton_humidity.mean)` over the window                                                         |
-| `bom_humidity_max`             | `MAX(laverton_humidity.max)` over the window                                                          |
+| `bom_humidity_mean`            | `AVG(weather_humidity.mean)` over the window                                                          |
+| `bom_humidity_max`             | `MAX(weather_humidity.max)` over the window                                                           |
 | `median_indoor_humidity`       | `AVG(median_humidity.mean)` over the window. **NULL** before 2024-01-08.                              |
 | `solar_wh_before_11am`         | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean x 1h)                                         |
 | `consumption_wh_load`          | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                           |
@@ -189,39 +193,52 @@ CREATE TABLE extraction_meta (
 | `battery_discharged_wh`        | `discharged.sum @ 11:00 − discharged.sum @ 18:00 prior`                                               |
 | `consumption_wh`               | `solar_wh_before_11am + grid_import_wh + battery_discharged_wh − grid_export_wh − battery_charged_wh` |
 | `curtailment_likely`           | `1 if max_soc_prev_daylight ≥ 99 else 0`                                                              |
-| `guests`                       | `1 if MAX(hastguests.mean over window) > 0.5 else 0`. **NULL** if window ends before 2026-03-08.      |
+| `guests`                       | `1 if MAX(guests_sensor.mean over window) > 0.5 else 0`. **NULL** if the guests sensor has no data for the window. Sensor configured in `config.yaml`. |
 
 All energy values are stored as **integer Wh**. Round to nearest whole Wh.
 SoC and temperature values are stored as **REAL** with 1 decimal place of precision.
 
 ## Provider period logic
 
-| Provider  | Date range (inclusive, by row date) | Notes                                     |
-| --------- | ----------------------------------- | ----------------------------------------- |
-| `ea`      | start of data → 2025-08-15          | Energy Australia                          |
-| `amber`   | 2025-08-16 → 2026-05-04             | Amber Energy (variable wholesale pricing) |
-| `globird` | 2026-05-05 → present                | GloBird (free 11am–2pm window)            |
+Provider periods are configured in `config.yaml` as an ordered list. Each entry has a `name` and a `start_date`; the provider for any given row date is the last entry whose `start_date` ≤ that date.
 
-`globird_start_date` is set to `2026-05-05` in `extraction_meta`. Rows on or after that date have provider `globird`; rows from 2025-08-16 to 2026-05-04 are `amber`; earlier rows are `ea`.
+```yaml
+providers:
+  - name: "provider_a"
+    start_date: "2023-01-01"
+  - name: "provider_b"
+    start_date: "2024-06-01"
+```
+
+The first provider's `start_date` also defines the earliest date the extraction will process. The `globird_start_date` key in `extraction_meta` is set from the config's `globird` provider entry if present.
 
 ## Special period flags
 
 ### Absence period
 
-Rows where `2025-09-28 ≤ date ≤ 2025-11-03` get `absence_period = 1`. All other rows: `0`. Consumption during this period is abnormal (occupant absent) and should be excluded from model training, but rows are kept in the dataset for completeness.
+Absence periods are configured in `config.yaml` as a list of date ranges:
+
+```yaml
+absence_periods:
+  - start: "2024-09-01"
+    end: "2024-10-15"
+```
+
+Rows whose date falls within any configured absence period get `absence_period = 1`. All other rows: `0`. Consumption during absence periods is abnormal (occupant absent) and should be excluded from model training, but rows are kept in the dataset for completeness.
 
 ### Data gap
 
 `data_gap = 1` marks rows where a known sensor outage makes the energy columns unreliable. The rows are kept in the dataset for chronological completeness but must be excluded from model training (`WHERE data_gap = 0`).
 
-Known gaps:
+Known gap dates are configured in `config.yaml`:
 
-| Period | Dates | Cause |
-| ------ | ----- | ----- |
-| Feb 2026 | 2026-02-22 to 2026-02-24 | Battery sensor template accidentally deleted |
-| May 2026 | 2026-05-05 to 2026-05-06 | Battery sensor template accidentally deleted |
+```yaml
+data_gap_dates:
+  - "2024-03-15"
+  - "2024-03-16"
+```
 
-New gaps are added to `DATA_GAP_DATES` in `extract.py` and backfilled via a migration. The extraction script warns when a large energy imbalance coincides with near-zero battery throughput (despite a significant SOC swing) or zero solar before 11am — both are reliable indicators of missing sensor data rather than normal integration noise.
+New gaps are added to the config and the extraction script run with `--from <date>` to backfill. The extraction script also warns automatically when a large energy imbalance coincides with near-zero battery throughput (despite a significant SOC swing) or zero solar before 11am — both are reliable indicators of missing sensor data rather than normal integration noise.
 
 ### Curtailment likely
 
@@ -350,10 +367,10 @@ These three samples cover both DST regimes (AEST and AEDT), both providers activ
 | ------------------------------------------ | ------------------------------------------------------------------------------------ |
 | Before 2023-11-27                          | No data; skip                                                                        |
 | 2023-11-28 → first available date          | First complete window                                                                |
-| Absence period (2025-09-28 to 2025-11-03)  | Flagged but not excluded (`absence_period = 1`)                                      |
-| Data gap periods (see § Data gap above)    | Flagged but not excluded (`data_gap = 1`); energy columns unreliable                 |
-| Before 2026-03-08                          | `guests` is NULL                                                                     |
-| 2026-03-08 onwards                         | `guests = 1` only on **2026-04-17** (the one positive case in the validation period) |
+| Configured absence periods                 | Flagged but not excluded (`absence_period = 1`)                                      |
+| Configured data gap dates                  | Flagged but not excluded (`data_gap = 1`); energy columns unreliable                 |
+| Before guests sensor has data              | `guests` is NULL                                                                     |
+| Once guests sensor is present              | `guests = 1` when the sensor reads > 0.5 for any hour in the window                 |
 | Today                                      | Skipped (window incomplete)                                                          |
 
 ## Energy balance as a QA signal

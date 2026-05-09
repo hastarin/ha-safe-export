@@ -1,10 +1,8 @@
-"""Timezone-aware window boundary computation for Australia/Melbourne."""
+"""Timezone-aware window boundary computation."""
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-
-MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 
 @dataclass(frozen=True)
@@ -22,7 +20,7 @@ class DayWindows:
     ts_11_today: int  # 11:00 local row date  — cum-delta end
 
 
-def windows_for_date(morning_date: date) -> DayWindows:
+def windows_for_date(morning_date: date, tz: ZoneInfo) -> DayWindows:
     """Return all window boundary timestamps for the given morning date.
 
     The overnight window is 18:00 prior day → 11:00 morning_date (local time).
@@ -32,7 +30,7 @@ def windows_for_date(morning_date: date) -> DayWindows:
     prior = morning_date - timedelta(days=1)
 
     def ts(d: date, hour: int) -> int:
-        return int(datetime(d.year, d.month, d.day, hour, tzinfo=MELBOURNE).timestamp())
+        return int(datetime(d.year, d.month, d.day, hour, tzinfo=tz).timestamp())
 
     return DayWindows(
         ts_06_prior=ts(prior, 6),

@@ -3,65 +3,33 @@
 import argparse
 import logging
 import sqlite3
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from src import __version__
+from src.config import Config, load_config
 from src.windows import windows_for_date
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 FIRST_DATE = date(2023, 11, 28)
-GUESTS_SENSOR_START = date(2026, 3, 8)
-AMBER_START = date(2025, 8, 16)
-GLOBIRD_START = date(2026, 5, 5)
-ABSENCE_START = date(2025, 9, 28)
-ABSENCE_END = date(2025, 11, 3)
-# Dates with known sensor outages where energy columns are unreliable.
-# Add new dates here when gaps are discovered; check ±1 day around each.
-DATA_GAP_DATES: frozenset[date] = frozenset([
-    date(2026, 2, 22),  # battery sensor template deleted
-    date(2026, 2, 23),  # battery sensor template deleted
-    date(2026, 2, 24),  # battery sensor template deleted
-    date(2026, 5, 5),   # battery sensor template deleted
-    date(2026, 5, 6),   # battery sensor template deleted
-])
-IMBALANCE_WARN_THRESHOLD = 3000
-# Thresholds for data-gap warning heuristics
-_BATTERY_ZERO_THRESHOLD = 500   # Wh — below this is suspicious if SOC swung significantly
-_SOC_SWING_THRESHOLD = 10.0     # % — SOC change that should have registered battery throughput
-
-_SENSOR_IDS = {
-    "byd_soc": "sensor.byd_battery_box_premium_hv_state_of_charge",
-    "pv": "sensor.solarnet_power_photovoltaics",
-    "load": "sensor.solarnet_power_load",
-    "grid_import": "sensor.smart_meter_63a_1_real_energy_consumed",
-    "grid_export": "sensor.smart_meter_63a_1_real_energy_produced",
-    "battery_charged": "sensor.battery_energy_charged",
-    "battery_discharged": "sensor.battery_energy_discharged",
-    "outdoor_temp": "sensor.netatmo_outdoor_temperature",
-    "indoor_temp": "sensor.netatmo_indoor_temperature",
-    "guests": "sensor.hastguests",
-    "bom_temp": "sensor.laverton_temp",
-    "bom_feels_like": "sensor.laverton_temp_feels_like",
-    "bom_rain": "sensor.laverton_rain_since_9am",
-    "bom_wind": "sensor.laverton_wind_speed_kilometre",
-    "bom_gust": "sensor.laverton_gust_speed_kilometre",
-    "solcast": "sensor.solcast_pv_forecast_forecast_tomorrow",
-    "median_temp": "sensor.median_temperature",
-    "bom_humidity": "sensor.laverton_humidity",
-    "median_humidity": "sensor.median_humidity",
-}
-
 
 _OPTIONAL_SENSORS = {"guests", "solcast", "median_temp", "median_humidity"}
 
+# Thresholds for data-gap warning heuristics
+_IMBALANCE_WARN_THRESHOLD = 3000
+_BATTERY_ZERO_THRESHOLD = 500   # Wh — below this is suspicious if SOC swung significantly
+_SOC_SWING_THRESHOLD = 10.0     # % — SOC change that should have registered battery throughput
 
-def _get_metadata_ids(ha: sqlite3.Connection) -> dict[str, int | None]:
+
+def _get_metadata_ids(ha: sqlite3.Connection, cfg: Config) -> dict[str, int | None]:
     """Look up metadata IDs for all sensors. Optional sensors return None if absent."""
     ids: dict[str, int | None] = {}
-    for key, sensor_id in _SENSOR_IDS.items():
+    for key, sensor_id in cfg.sensor_ids.items():
+        if sensor_id is None:
+            ids[key] = None
+            continue
         row = ha.execute(
             "SELECT id FROM statistics_meta WHERE statistic_id = ?", (sensor_id,)
         ).fetchone()
@@ -73,22 +41,6 @@ def _get_metadata_ids(ha: sqlite3.Connection) -> dict[str, int | None]:
         else:
             ids[key] = row[0]
     return ids
-
-
-def _provider(d: date) -> str:
-    if d >= GLOBIRD_START:
-        return "globird"
-    if d >= AMBER_START:
-        return "amber"
-    return "ea"
-
-
-def _absence(d: date) -> int:
-    return 1 if ABSENCE_START <= d <= ABSENCE_END else 0
-
-
-def _data_gap(d: date) -> int:
-    return 1 if d in DATA_GAP_DATES else 0
 
 
 def _cum_delta(
@@ -114,15 +66,16 @@ def extract_row(
     ha: sqlite3.Connection,
     ids: dict[str, int | None],
     morning_date: date,
+    cfg: Config,
 ) -> dict | None:
     """Return a dict of column values for one morning_date, or None to skip."""
-    w = windows_for_date(morning_date)
+    w = windows_for_date(morning_date, cfg.timezone)
     date_str = morning_date.isoformat()
 
     def soc_mean(ts: int) -> float | None:
         row = ha.execute(
             "SELECT mean FROM statistics WHERE metadata_id = ? AND start_ts = ?",
-            (ids["byd_soc"], ts),
+            (ids["battery_soc"], ts),
         ).fetchone()
         return round(row[0], 1) if row and row[0] is not None else None
 
@@ -131,25 +84,26 @@ def extract_row(
 
     row = ha.execute(
         "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["byd_soc"], w.ts_18_prior, w.ts_10_today),
+        (ids["battery_soc"], w.ts_18_prior, w.ts_10_today),
     ).fetchone()
     min_soc_overnight = round(row[0], 1) if row and row[0] is not None else None
 
     row = ha.execute(
         "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts < ?",
-        (ids["byd_soc"], w.ts_06_prior, w.ts_18_prior),
+        (ids["battery_soc"], w.ts_06_prior, w.ts_18_prior),
     ).fetchone()
     max_soc_prev_daylight = round(row[0], 1) if row and row[0] is not None else None
 
+    _win = (w.ts_18_prior, w.ts_10_today)
+    _q = "WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?"
+
     row = ha.execute(
-        "SELECT SUM(MAX(mean, 0)) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["pv"], w.ts_18_prior, w.ts_10_today),
+        f"SELECT SUM(MAX(mean, 0)) FROM statistics {_q}", (ids["pv"], *_win)
     ).fetchone()
     solar_wh = round(row[0]) if row and row[0] is not None else None
 
     row = ha.execute(
-        "SELECT SUM(ABS(mean)) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["load"], w.ts_18_prior, w.ts_10_today),
+        f"SELECT SUM(ABS(mean)) FROM statistics {_q}", (ids["load"], *_win)
     ).fetchone()
     consumption_wh_load = round(row[0]) if row and row[0] is not None else None
 
@@ -170,61 +124,31 @@ def extract_row(
         log.warning("Skipping %s — missing data for: %s", date_str, ", ".join(missing))
         return None
 
-    consumption_wh = solar_wh + grid_import_wh + battery_discharged_wh - grid_export_wh - battery_charged_wh
+    consumption_wh = (
+        solar_wh + grid_import_wh + battery_discharged_wh
+        - grid_export_wh - battery_charged_wh
+    )
+
+    def _r1(agg: str, key: str) -> float | None:
+        r = ha.execute(f"SELECT {agg} FROM statistics {_q}", (ids[key], *_win)).fetchone()
+        return round(r[0], 1) if r and r[0] is not None else None
+
+    min_outdoor_temp = _r1("MIN(min)", "outdoor_temp")
+    avg_indoor_temp = _r1("AVG(mean)", "indoor_temp")
+    bom_temp_min = _r1("MIN(min)", "weather_temp")
+    bom_temp_mean = _r1("AVG(mean)", "weather_temp")
+    bom_temp_max = _r1("MAX(max)", "weather_temp")
+    bom_feels_like_min = _r1("MIN(min)", "weather_feels_like")
+    bom_wind_mean = _r1("AVG(mean)", "weather_wind")
+    bom_gust_max = _r1("MAX(max)", "weather_gust")
+    bom_humidity_mean = _r1("AVG(mean)", "weather_humidity")
+    bom_humidity_max = _r1("MAX(max)", "weather_humidity")
 
     row = ha.execute(
-        "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["outdoor_temp"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    min_outdoor_temp = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["indoor_temp"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    avg_indoor_temp = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_temp"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_temp_min = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_temp"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_temp_mean = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_temp"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_temp_max = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT MIN(min) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_feels_like"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_feels_like_min = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT MAX(CAST(state AS REAL)) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_rain"], w.ts_18_prior, w.ts_10_today),
+        f"SELECT MAX(CAST(state AS REAL)) FROM statistics {_q}",
+        (ids["weather_rain"], *_win),
     ).fetchone()
     bom_rain_max = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_wind"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_wind_mean = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_gust"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_gust_max = round(row[0], 1) if row and row[0] is not None else None
 
     solcast_forecast_tomorrow_wh: int | None = None
     if ids["solcast"] is not None:
@@ -237,56 +161,38 @@ def extract_row(
 
     median_indoor_temp: float | None = None
     if ids["median_temp"] is not None:
-        row = ha.execute(
-            "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-            (ids["median_temp"], w.ts_18_prior, w.ts_10_today),
-        ).fetchone()
-        median_indoor_temp = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_humidity"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_humidity_mean = round(row[0], 1) if row and row[0] is not None else None
-
-    row = ha.execute(
-        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-        (ids["bom_humidity"], w.ts_18_prior, w.ts_10_today),
-    ).fetchone()
-    bom_humidity_max = round(row[0], 1) if row and row[0] is not None else None
+        median_indoor_temp = _r1("AVG(mean)", "median_temp")
 
     median_indoor_humidity: float | None = None
     if ids["median_humidity"] is not None:
-        row = ha.execute(
-            "SELECT AVG(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-            (ids["median_humidity"], w.ts_18_prior, w.ts_10_today),
-        ).fetchone()
-        median_indoor_humidity = round(row[0], 1) if row and row[0] is not None else None
+        median_indoor_humidity = _r1("AVG(mean)", "median_humidity")
 
     guests: int | None = None
-    if morning_date >= GUESTS_SENSOR_START and ids["guests"] is not None:
+    if ids["guests"] is not None and cfg.sensors.guests is not None:
         row = ha.execute(
-            "SELECT MAX(mean) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
-            (ids["guests"], w.ts_18_prior, w.ts_10_today),
+            f"SELECT MAX(mean) FROM statistics {_q}", (ids["guests"], *_win)
         ).fetchone()
         max_guests = row[0] if row and row[0] is not None else None
-        guests = 1 if (max_guests is not None and max_guests > 0.5) else 0
+        if max_guests is not None:
+            guests = 1 if max_guests > 0.5 else 0
 
-    curtailment_likely = 1 if (max_soc_prev_daylight is not None and max_soc_prev_daylight >= 99) else 0
+    curtailment_likely = (
+        1 if (max_soc_prev_daylight is not None and max_soc_prev_daylight >= 99) else 0
+    )
 
     large_imbalance: int | None = None
     if consumption_wh_load is not None:
         imbalance = consumption_wh_load - consumption_wh
-        if abs(imbalance) > IMBALANCE_WARN_THRESHOLD:
+        if abs(imbalance) > _IMBALANCE_WARN_THRESHOLD:
             large_imbalance = imbalance
 
-    now_utc = datetime.now(timezone.utc).isoformat()
+    now_utc = datetime.now(UTC).isoformat()
     return {
         "date": date_str,
-        "provider": _provider(morning_date),
+        "provider": cfg.provider_for(morning_date),
         "guests": guests,
-        "absence_period": _absence(morning_date),
-        "data_gap": _data_gap(morning_date),
+        "absence_period": int(cfg.is_absence(morning_date)),
+        "data_gap": int(cfg.is_data_gap(morning_date)),
         "soc_at_6pm": soc_at_6pm,
         "min_soc_overnight": min_soc_overnight,
         "max_soc_prev_daylight": max_soc_prev_daylight,
@@ -322,6 +228,7 @@ def extract_row(
 def extract_all(
     ha_db: Path,
     dataset_db: Path,
+    cfg: Config,
     rebuild: bool = False,
     from_date: date | None = None,
 ) -> None:
@@ -330,6 +237,7 @@ def extract_all(
     Args:
         ha_db: Path to Home Assistant SQLite database (will be opened read-only)
         dataset_db: Path to output dataset SQLite database
+        cfg: Loaded configuration
         rebuild: If True, drop all tables and re-extract from FIRST_DATE
         from_date: If set, re-extract from this date forward (incremental)
     """
@@ -346,7 +254,7 @@ def extract_all(
 
     ds.executescript(schema_sql)
 
-    ids = _get_metadata_ids(ha)
+    ids = _get_metadata_ids(ha, cfg)
 
     if from_date is not None:
         start = from_date
@@ -375,7 +283,7 @@ def extract_all(
     current = start
     while current <= yesterday:
         date_str = current.isoformat()
-        row_data = extract_row(ha, ids, current)
+        row_data = extract_row(ha, ids, current, cfg)
 
         if row_data is None:
             skipped += 1
@@ -392,7 +300,10 @@ def extract_all(
             )
             solar_zero = (row_data.get("solar_wh_before_11am") or 0) == 0
             if battery_zero or solar_zero:
-                reason = "near-zero battery throughput despite SOC swing" if battery_zero else "zero solar"
+                reason = (
+                    "near-zero battery throughput despite SOC swing"
+                    if battery_zero else "zero solar"
+                )
                 log.warning(
                     "Possible data gap on %s: large imbalance (%+d Wh) with %s"
                     " — check this date and ±1 day in HA",
@@ -445,12 +356,15 @@ def extract_all(
 
     ds.commit()
 
-    now_utc = datetime.now(timezone.utc).isoformat()
+    now_utc = datetime.now(UTC).isoformat()
+    globird_start = next(
+        (p.start_date.isoformat() for p in cfg.providers if p.name == "globird"), ""
+    )
     for key, value in [
         ("schema_version", "1.3.0"),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
-        ("globird_start_date", "2026-05-05"),
+        ("globird_start_date", globird_start),
     ]:
         ds.execute(
             "INSERT OR REPLACE INTO extraction_meta (key, value, updated_at) VALUES (?, ?, ?)",
@@ -482,6 +396,12 @@ def main() -> None:
         help="Path to the output dataset SQLite database (default: data/dataset.db)",
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config/config.yaml"),
+        help="Path to config.yaml (default: config/config.yaml)",
+    )
+    parser.add_argument(
         "--rebuild",
         action="store_true",
         help="Drop and re-extract all rows",
@@ -494,9 +414,11 @@ def main() -> None:
         help="Re-extract from this date forward",
     )
     args = parser.parse_args()
+    cfg = load_config(args.config)
     extract_all(
         ha_db=args.ha_db,
         dataset_db=args.dataset_db,
+        cfg=cfg,
         rebuild=args.rebuild,
         from_date=args.from_date,
     )

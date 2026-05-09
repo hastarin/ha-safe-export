@@ -9,56 +9,17 @@ Zones are determined by forecast overnight mean temperature (bom_temp_mean):
   - Mild     : 19–21 °C — empirical percentile table (no predictive signal from temp)
   - Cooling  : > 21 °C  — OLS on temp + humidity (R²=0.37, weak; improves with more data)
 
-Coefficients fitted on chronological 80% training split (up to 2025-11-16, n=676).
+Coefficients are loaded from config.yaml and updated after each retraining run.
 Held-out test MAE = 1.75 kWh; P95 error buffer (3.56 kWh) covers 92% of test residuals.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-BATTERY_CAPACITY_WH: float = 13_800.0
-
-Provider = Literal["ea", "amber", "globird"]
-
-# ---------------------------------------------------------------------------
-# Hardcoded model coefficients (fitted on training set ≤ 2025-11-16)
-# ---------------------------------------------------------------------------
-
-# Heating zone (bom_temp_mean < 19°C)
-# consumption_kwh = H_INTERCEPT + H_B_TEMP * temp + H_B_SOLCAST * solcast_kwh
-_H_INTERCEPT: float = 19.7258
-_H_B_TEMP: float = -0.7756
-_H_B_SOLCAST: float = -0.070291  # per kWh of Solcast forecast
-
-# Heating zone fallback when Solcast is unavailable
-# consumption_kwh = H_TEMP_ONLY_INTERCEPT + H_TEMP_ONLY_B_TEMP * temp
-_H_TEMP_ONLY_INTERCEPT: float = 18.8039
-_H_TEMP_ONLY_B_TEMP: float = -0.8614
-
-# Cooling zone (bom_temp_mean > 21°C)
-# consumption_kwh = C_INTERCEPT + C_B_TEMP * temp + C_B_HUMIDITY * humidity_pct
-_C_INTERCEPT: float = -13.4046
-_C_B_TEMP: float = 0.7231
-_C_B_HUMIDITY: float = 0.059498  # per % relative humidity
-
-# Cooling zone fallback when humidity is unavailable
-_C_TEMP_ONLY_INTERCEPT: float = -6.756
-_C_TEMP_ONLY_B_TEMP: float = 0.660
-
-# Mild zone (19°C ≤ bom_temp_mean ≤ 21°C): empirical percentile table
-_MILD_PERCENTILES: dict[str, float] = {
-    "p50": 4.601,
-    "p75": 6.583,
-    "p90": 7.829,
-    "p95": 8.425,
-}
-
-# P95 absolute residual buffers (kWh) — covers ~92% of held-out test errors
-_HEATING_P95_BUFFER_KWH: float = 3.562
-_COOLING_P95_BUFFER_KWH: float = 3.136
-_MILD_P95_BUFFER_KWH: float = 0.0  # percentile table already encodes the distribution
+if TYPE_CHECKING:
+    from src.config import Config
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +36,6 @@ class PredictInputs:
 
     bom_temp_mean: float
     """Forecast overnight mean temperature (°C). Used to select zone and predict consumption."""
-
-    provider: Provider
-    """Current energy provider — recorded for model stratification; does not alter the prediction."""
 
     solcast_forecast_tomorrow_wh: float | None = None
     """Solcast full-day PV forecast for tomorrow (Wh). Available from Oct 2024 onward.
@@ -134,39 +92,39 @@ def _select_percentile(percentiles: dict[str, float], confidence: float) -> floa
 
 def _predict_consumption(
     inputs: PredictInputs,
+    cfg: Config,
 ) -> tuple[float, float, str, Literal["heating", "mild", "cooling"]]:
     """Return (point_estimate_kwh, p95_buffer_kwh, model_variant, zone)."""
+    m = cfg.model
     temp = inputs.bom_temp_mean
 
     if temp < 19.0:
         if inputs.solcast_forecast_tomorrow_wh is not None:
             solcast_kwh = inputs.solcast_forecast_tomorrow_wh / 1000.0
-            est = _H_INTERCEPT + _H_B_TEMP * temp + _H_B_SOLCAST * solcast_kwh
-            return est, _HEATING_P95_BUFFER_KWH, "heating_with_solcast", "heating"
+            est = m.heating_intercept + m.heating_b_temp * temp + m.heating_b_solcast * solcast_kwh
+            return est, m.heating_p95_buffer_kwh, "heating_with_solcast", "heating"
         else:
-            est = _H_TEMP_ONLY_INTERCEPT + _H_TEMP_ONLY_B_TEMP * temp
-            return est, _HEATING_P95_BUFFER_KWH, "heating_temp_only", "heating"
+            est = m.heating_temp_only_intercept + m.heating_temp_only_b_temp * temp
+            return est, m.heating_p95_buffer_kwh, "heating_temp_only", "heating"
 
     elif temp <= 21.0:
-        # Mild zone: return P50 as point estimate; caller applies confidence-appropriate value
-        est = _MILD_PERCENTILES["p50"]
-        return est, _MILD_P95_BUFFER_KWH, "mild_empirical", "mild"
+        mild_percentiles = {
+            "p50": m.mild_p50, "p75": m.mild_p75, "p90": m.mild_p90, "p95": m.mild_p95,
+        }
+        est = mild_percentiles["p50"]
+        return est, 0.0, "mild_empirical", "mild"
 
     else:  # cooling
         if inputs.bom_humidity_mean is not None:
-            est = _C_INTERCEPT + _C_B_TEMP * temp + _C_B_HUMIDITY * inputs.bom_humidity_mean
-            return est, _COOLING_P95_BUFFER_KWH, "cooling_with_humidity", "cooling"
+            est = (
+                m.cooling_intercept
+                + m.cooling_b_temp * temp
+                + m.cooling_b_humidity * inputs.bom_humidity_mean
+            )
+            return est, m.cooling_p95_buffer_kwh, "cooling_with_humidity", "cooling"
         else:
-            est = _C_TEMP_ONLY_INTERCEPT + _C_TEMP_ONLY_B_TEMP * temp
-            return est, _COOLING_P95_BUFFER_KWH, "cooling_temp_only", "cooling"
-
-
-def _provider_note(provider: Provider) -> str:
-    if provider == "globird":
-        return "Provider: GloBird (free 11am–2pm window guarantees next-day recharge)."
-    elif provider == "amber":
-        return "Provider: Amber (variable wholesale pricing)."
-    return "Provider: Energy Australia (flat-rate)."
+            est = m.cooling_temp_only_intercept + m.cooling_temp_only_b_temp * temp
+            return est, m.cooling_p95_buffer_kwh, "cooling_temp_only", "cooling"
 
 
 # ---------------------------------------------------------------------------
@@ -174,30 +132,28 @@ def _provider_note(provider: Provider) -> str:
 # ---------------------------------------------------------------------------
 
 
-def predict(inputs: PredictInputs) -> PredictResult:
+def predict(inputs: PredictInputs, cfg: Config) -> PredictResult:
     """Compute the safe-export recommendation for the evening peak (6–9pm).
 
     Uses actuals at training time and forecasts at inference time — the interface
     is identical. Returns a PredictResult with safe_export_wh ≥ 0.
     """
-    capacity_wh = BATTERY_CAPACITY_WH
+    capacity_wh = cfg.battery_capacity_wh
 
     available_discharge_wh = max(
         0.0, (inputs.soc_at_6pm / 100.0 - inputs.min_soc) * capacity_wh
     )
 
-    point_kwh, p95_buffer_kwh, variant, zone = _predict_consumption(inputs)
+    point_kwh, p95_buffer_kwh, variant, zone = _predict_consumption(inputs, cfg)
 
-    # For mild zone, use the confidence-appropriate percentile as the consumption estimate
-    # rather than adding a separate buffer on top of P50.
+    m = cfg.model
+    mild_percentiles = {"p50": m.mild_p50, "p75": m.mild_p75, "p90": m.mild_p90, "p95": m.mild_p95}
+
     if zone == "mild":
-        consumption_estimate_kwh = _select_percentile(_MILD_PERCENTILES, inputs.confidence)
+        consumption_estimate_kwh = _select_percentile(mild_percentiles, inputs.confidence)
         buffer_kwh = 0.0
     else:
         consumption_estimate_kwh = point_kwh
-        # Scale the P95 buffer to the requested confidence level.
-        # P95 is the 95th percentile of abs(residual); for lower confidence we scale linearly.
-        # This is conservative but avoids over-engineering with a formal quantile model.
         confidence_scale = {0.50: 0.31, 0.75: 0.58, 0.90: 0.87, 0.95: 1.00}
         scale = min(confidence_scale.items(), key=lambda kv: abs(kv[0] - inputs.confidence))[1]
         buffer_kwh = p95_buffer_kwh * scale
@@ -219,7 +175,6 @@ def predict(inputs: PredictInputs) -> PredictResult:
         f"Available discharge: {available_discharge_wh/1000:.2f} kWh "
         f"(SoC {inputs.soc_at_6pm:.0f}% → {inputs.min_soc*100:.0f}% floor).",
         f"Safe export: {safe_export_wh/1000:.2f} kWh.",
-        _provider_note(inputs.provider),
     ]
 
     return PredictResult(

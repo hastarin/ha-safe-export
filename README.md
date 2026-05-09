@@ -150,7 +150,7 @@ template:
         data:
           type: hourly
         target:
-          entity_id: weather.truganina_hourly
+          entity_id: weather.truganina_hourly  # Replace with your weather entity
         response_variable: hourly
     sensor:
       - name: "Overnight Forecast Temp Mean"
@@ -158,7 +158,7 @@ template:
         unit_of_measurement: "°C"
         state_class: measurement
         state: >
-          {% set forecasts = hourly['weather.truganina_hourly']['forecast'] %}
+          {% set forecasts = hourly['weather.truganina_hourly']['forecast'] %}  {# Replace entity name #}
           {% set tomorrow = (now().date() + timedelta(days=1)).strftime('%Y-%m-%d') %}
           {% set tonight = now().date().strftime('%Y-%m-%d') %}
           {% set ns = namespace(total=0, count=0) %}
@@ -178,7 +178,7 @@ template:
         unit_of_measurement: "%"
         state_class: measurement
         state: >
-          {% set forecasts = hourly['weather.truganina_hourly']['forecast'] %}
+          {% set forecasts = hourly['weather.truganina_hourly']['forecast'] %}  {# Replace entity name #}
           {% set tomorrow = (now().date() + timedelta(days=1)).strftime('%Y-%m-%d') %}
           {% set tonight = now().date().strftime('%Y-%m-%d') %}
           {% set ns = namespace(total=0, count=0) %}
@@ -244,16 +244,18 @@ Read the values from HA and call `predict()` from the command line:
 
 ```bash
 .venv\Scripts\python -c "
+from pathlib import Path
+from src.config import load_config
 from src.model import PredictInputs, predict
+cfg = load_config(Path('config/config.yaml'))
 result = predict(PredictInputs(
-    soc_at_6pm=85.0,                      # sensor.byd_battery_box_premium_hv_state_of_charge
+    soc_at_6pm=85.0,                      # live battery SoC at 6pm (%)
     bom_temp_mean=10.5,                   # sensor.overnight_forecast_temp_mean
     bom_humidity_mean=87.0,               # sensor.overnight_forecast_humidity_mean
     solcast_forecast_tomorrow_wh=18000,   # sensor.solcast_pv_forecast_forecast_tomorrow
-    provider='amber',                     # current provider: 'ea', 'amber', or 'globird'
     min_soc=0.10,                         # battery min SoC setting (0.20 in storm mode)
     confidence=0.90,
-))
+), cfg)
 print(f'Safe export: {result.safe_export_wh:.0f} Wh  ({result.safe_export_wh/1000:.2f} kWh)')
 print(result.reasoning)
 "
@@ -262,17 +264,19 @@ print(result.reasoning)
 Or from a Python script/REPL:
 
 ```python
+from pathlib import Path
+from src.config import load_config
 from src.model import PredictInputs, predict
 
+cfg = load_config(Path("config/config.yaml"))
 result = predict(PredictInputs(
-    soc_at_6pm=85.0,
+    soc_at_6pm=85.0,               # live battery SoC at 6pm (%)
     bom_temp_mean=10.5,
     bom_humidity_mean=87.0,
     solcast_forecast_tomorrow_wh=18000,
-    provider="amber",
     min_soc=0.10,
     confidence=0.90,
-))
+), cfg)
 
 print(f"Safe export: {result.safe_export_wh:.0f} Wh")
 print(f"Zone: {result.zone}, model: {result.model_variant}")
@@ -290,8 +294,8 @@ print(result.reasoning)
 
 ## Contributing
 
-This is currently a personal infrastructure project. If you've stumbled across it and have a similar setup (BYD + Fronius + Australian residential), feel free to open an issue — generalisation is a Phase 3 concern but the design docs may already be useful to you.
+This is currently a personal infrastructure project. If you've stumbled across it and have a similar setup (home battery + solar + smart meter), feel free to open an issue — the approach and design docs may already be useful to you even if your hardware differs.
 
 ## License
 
-TBD.
+MIT — see [LICENSE](LICENSE).

@@ -5,6 +5,9 @@ data/
 *.sqlite
 *.sqlite3
 
+# Personal configuration (contains sensor names and personal history)
+config/config.yaml
+
 # IDE & editor
 .vscode/settings.json
 .vscode/

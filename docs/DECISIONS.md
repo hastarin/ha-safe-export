@@ -27,7 +27,7 @@ Each entry has the form:
 
 **Coverage:** BOM sensors available from April 2023 (full dataset coverage). Solcast from Oct 2024 (NULL before). Median temp from Jan 2024 (NULL before). The model can handle partial coverage via NULL-aware training.
 
-**Implementation note:** The rain sensor (`sensor.laverton_rain_since_9am`) and Solcast sensor store values in `state` only — `mean`/`min`/`max` are NULL in HA statistics. Rain uses `MAX(CAST(state AS REAL))`; Solcast reads `state` at the 17:00 bucket on the prior day.
+**Implementation note:** The weather rain sensor and Solcast sensor store values in `state` only — `mean`/`min`/`max` are NULL in HA statistics. Rain uses `MAX(CAST(state AS REAL))`; Solcast reads `state` at the 17:00 bucket on the prior day.
 
 **Evidence:** All sensors verified present in HA statistics table with sufficient history.
 
@@ -35,13 +35,13 @@ Each entry has the form:
 
 ### Add humidity features (v1.2.0)
 
-**Decision:** Extend the dataset with 3 additional columns: `bom_humidity_mean`, `bom_humidity_max` (from `sensor.laverton_humidity`), and `median_indoor_humidity` (from `sensor.median_humidity`).
+**Decision:** Extend the dataset with 3 additional columns: `bom_humidity_mean`, `bom_humidity_max` (from the configured weather humidity sensor), and `median_indoor_humidity` (from the configured median humidity sensor).
 **Status:** Locked.
 **Date:** 2026-05-07
 
 **Rationale:** The ENERGY_ANALYSIS.md document identified humidity as the primary unexplained variance in the cooling model (Zone 3, R²=0.38). AC load is driven by apparent comfort, which depends on both temperature and humidity. Having humidity data starting from this point will allow the cooling model to be re-evaluated once enough hot-night data accumulates.
 
-**Coverage:** `sensor.laverton_humidity` has full dataset coverage from 2023-04-12. `sensor.median_humidity` is NULL before 2024-01-08 — same boundary as `median_indoor_temp`, no new NULL region introduced.
+**Coverage:** The weather humidity sensor should have full dataset coverage if sourced from a BOM-type integration. The median humidity sensor is NULL before the sensor was introduced — same boundary as `median_indoor_temp`, no new NULL region introduced.
 
 **Implementation note:** Both sensors store values in `mean`/`min`/`max` normally (unlike rain and Solcast which use `state` only). `bom_humidity_mean` uses `AVG(mean)`, `bom_humidity_max` uses `MAX(max)`, `median_indoor_humidity` uses `AVG(mean)` — all over the standard 6pm–11am overnight window.
 
@@ -213,28 +213,26 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 
 ### Flag the absence period; do not exclude its rows
 
-**Decision:** Rows where `2025-09-28 ≤ date ≤ 2025-11-03` are written with `absence_period = 1` but otherwise computed normally.
+**Decision:** Rows whose date falls within a configured absence period are written with `absence_period = 1` but otherwise computed normally. Absence periods are defined in `config.yaml`.
 **Status:** Locked.
 
 **Rationale:** Excluding the rows from the dataset would create gaps that complicate downstream code (e.g. time-series operations). Writing them with a flag preserves chronological completeness while letting the model trainer filter cleanly with `WHERE absence_period = 0`. The data itself remains useful for QA and pattern comparison.
 
 ### Flag data gaps; do not delete their rows
 
-**Decision:** Rows with known sensor outages are written with `data_gap = 1` and kept in the dataset. New gaps are added to `DATA_GAP_DATES` in `extract.py` and backfilled via a numbered migration.
+**Decision:** Rows with known sensor outages are written with `data_gap = 1` and kept in the dataset. New gaps are added to `data_gap_dates` in `config.yaml` and the extraction script re-run with `--from <date>` to backfill.
 **Status:** Locked.
 
-**Rationale:** Same reasoning as the absence period flag — deleting rows creates chronological gaps that complicate downstream code. A flag lets the model trainer filter cleanly with `WHERE data_gap = 0` while preserving the rows for QA. Hardcoding gap dates in `extract.py` (rather than a config file or DB table) keeps the logic auditable and version-controlled alongside the code that produces the data.
+**Rationale:** Same reasoning as the absence period flag — deleting rows creates chronological gaps that complicate downstream code. A flag lets the model trainer filter cleanly with `WHERE data_gap = 0` while preserving the rows for QA.
 
 The extraction script detects likely new gaps automatically: a large energy imbalance (>3000 Wh between balance-derived and load-integrated consumption) combined with near-zero battery throughput despite a significant SOC swing, or zero solar before 11am (reliable even in Melbourne mid-winter), triggers a warning and a ±1 day investigation prompt. High-cycling days produce large imbalances without these signatures and are not warned on.
 
 ### Guests column is NULL before 2026-03-08
 
-**Decision:** When the `sensor.hastguests` sensor doesn't yet exist for the row's date, store `guests = NULL`, not 0.
+**Decision:** When the guests sensor has no data for a row's window, store `guests = NULL`, not 0. The guests sensor is configured via `config.yaml` (`sensors.guests`).
 **Status:** Locked.
 
-**Rationale:** Distinguishing "no guests" from "we don't know" matters for modelling. A NULL forces the trainer to make an explicit choice about how to handle pre-sensor rows (impute, exclude, treat as 0); zero-filling silently makes that choice and biases the feature.
-
-**Evidence:** Across the period 2026-03-08 to today, only one date (2026-04-17) recorded `guests = 1`. The positive class is so rare that naive treatment of pre-sensor rows as 0 would be effectively indistinguishable from the actual label distribution but would still bias any model that learns from `guests`.
+**Rationale:** Distinguishing "no guests" from "we don't know" matters for modelling. A NULL forces the trainer to make an explicit choice about how to handle pre-sensor rows (impute, exclude, treat as 0); zero-filling silently makes that choice and biases the feature. Note: the guests column is not yet used by the model — it is stored for future use once enough positive examples have accumulated.
 
 ### Energy imbalance is logged, not corrected
 
@@ -344,11 +342,11 @@ The extraction script detects likely new gaps automatically: a large energy imba
 
 These are explicitly _not_ settled. They are recorded so that an agent asked to make one of these choices recognises it as a real decision requiring discussion, not a default.
 
-- **Provider handling.** Provider is currently a pass-through input that only affects the reasoning string. Separate models per provider, or provider as a quantitative feature? The transition from `ea` to `amber` to `globird` represents real tariff-structure differences. Deferred until enough GloBird-period data exists to evaluate.
+- **Provider handling.** Provider is recorded in the dataset but is not passed to `predict()` — it was only affecting the reasoning string and has been removed from the inference interface. Separate models per provider, or provider as a quantitative feature? The transition between provider periods represents real tariff-structure differences. Deferred until enough data under each tariff exists to evaluate.
 - **Cooling model improvement.** Only 49 training nights (one summer). Re-evaluate coefficients and consider adding `median_indoor_humidity` once a second full summer is in the dataset (expected: late 2026).
 - **Retraining cadence.** Daily, weekly, monthly? Triggered by error spikes or scheduled? Deferred to Phase 3.
 - **Live deployment safety.** What backstops protect against a model going haywire in production (e.g. an absolute reserve-floor hardstop independent of the model output)? Deferred to Phase 3.
-- **Generalisation to other hardware.** Battery capacity, reserve fraction, and sensor names are currently hardcoded for one installation. Phase 3 will need a configuration layer for other users.
+- **Generalisation to other hardware.** Battery capacity, reserve fraction, and sensor names are now configurable via `config.yaml`. Phase 3 will surface this configuration through the HA integration UI so users don't need to edit YAML manually.
 
 ---
 

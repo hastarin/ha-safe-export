@@ -49,11 +49,11 @@ NULLABLE_WH_COLS = {"solcast_forecast_tomorrow_wh"}
 
 
 @pytest.fixture(scope="session")
-def dataset_db(tmp_path_factory):
+def dataset_db(tmp_path_factory, test_cfg):
     if not HA_DB.exists():
         pytest.skip(f"HA database not found at {HA_DB}")
     db_path = tmp_path_factory.mktemp("data") / "dataset.db"
-    extract_all(ha_db=HA_DB, dataset_db=db_path)
+    extract_all(ha_db=HA_DB, dataset_db=db_path, cfg=test_cfg)
     return db_path
 
 
