@@ -8,13 +8,13 @@ The model becomes the brain of a Home Assistant automation that, at 6pm each day
 
 ## System context
 
-| Component       | Detail                                                    |
-| --------------- | --------------------------------------------------------- |
+| Component       | Detail                                                                          |
+| --------------- | ------------------------------------------------------------------------------- |
 | Battery         | Configured in `config.yaml` (`battery.capacity_wh`, `battery.reserve_fraction`) |
-| Reserve         | Configurable floor (default 10%)                                                 |
-| Solar           | Any inverter with HA statistics integration                                      |
-| Location        | Configured timezone in `config.yaml`                                             |
-| Heating/cooling | Indoor climate strongly affects overnight load                                   |
+| Reserve         | Configurable floor (default 10%)                                                |
+| Solar           | Any inverter with HA statistics integration                                     |
+| Location        | Configured timezone in `config.yaml`                                            |
+| Heating/cooling | Indoor climate strongly affects overnight load                                  |
 | Energy provider | Time-varying; periods configured in `config.yaml`; see DATASET.md               |
 
 The provider is recorded in the dataset because tariff structure influences consumption behaviour — free overnight charging windows, wholesale price exposure, and flat-rate plans all change how the home is operated, which shifts the underlying load profile. Provider is not currently used in the `predict()` function; the user selects an appropriate confidence level (P50–P95) for their own risk tolerance. Provider is retained as a stratification variable so per-provider model performance can be evaluated as more data accumulates under each tariff.

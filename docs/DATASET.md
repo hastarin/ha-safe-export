@@ -66,14 +66,14 @@ Note: the guests column is not yet used by the model — it is stored for future
 
 Configure your weather station sensors in `config.yaml` under `sensors.weather_*`. Any HA weather integration providing the sensors below works (BOM via Bureau of Meteorology integration, Met.no, etc.).
 
-| Purpose         | Config key               | Native unit | Method                                            |
-| --------------- | ------------------------ | ----------- | ------------------------------------------------- |
-| Temperature     | `sensors.weather_temp`   | °C          | `MIN(min)` / `AVG(mean)` / `MAX(max)` over window |
-| Feels-like temp | `sensors.weather_feels_like` | °C      | `MIN(min)` over window                            |
-| Rain since 9am  | `sensors.weather_rain`   | mm          | `MAX(CAST(state AS REAL))` over window            |
-| Wind speed      | `sensors.weather_wind`   | km/h        | `AVG(mean)` over window                           |
-| Gust speed      | `sensors.weather_gust`   | km/h        | `MAX(max)` over window                            |
-| Humidity        | `sensors.weather_humidity` | %         | `AVG(mean)` / `MAX(max)` over window              |
+| Purpose         | Config key                   | Native unit | Method                                            |
+| --------------- | ---------------------------- | ----------- | ------------------------------------------------- |
+| Temperature     | `sensors.weather_temp`       | °C          | `MIN(min)` / `AVG(mean)` / `MAX(max)` over window |
+| Feels-like temp | `sensors.weather_feels_like` | °C          | `MIN(min)` over window                            |
+| Rain since 9am  | `sensors.weather_rain`       | mm          | `MAX(CAST(state AS REAL))` over window            |
+| Wind speed      | `sensors.weather_wind`       | km/h        | `AVG(mean)` over window                           |
+| Gust speed      | `sensors.weather_gust`       | km/h        | `MAX(max)` over window                            |
+| Humidity        | `sensors.weather_humidity`   | %           | `AVG(mean)` / `MAX(max)` over window              |
 
 Note: the rain sensor stores values in `state` only (`mean`/`min`/`max` are NULL in HA statistics). Use `MAX(CAST(state AS REAL))` to get the peak rain gauge reading over the window.
 
@@ -95,9 +95,9 @@ NULL for rows before 2024-01-08.
 
 ### Median indoor humidity
 
-| Purpose           | Sensor                    | Native unit | Method                  | Available from |
-| ----------------- | ------------------------- | ----------- | ----------------------- | -------------- |
-| Multi-room median | `sensor.median_humidity`  | %           | `AVG(mean)` over window | 2024-01-08     |
+| Purpose           | Sensor                   | Native unit | Method                  | Available from |
+| ----------------- | ------------------------ | ----------- | ----------------------- | -------------- |
+| Multi-room median | `sensor.median_humidity` | %           | `AVG(mean)` over window | 2024-01-08     |
 
 NULL for rows before 2024-01-08.
 
@@ -165,34 +165,34 @@ CREATE TABLE extraction_meta (
 
 ## Column computation
 
-| Column                         | Formula                                                                                               |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `soc_at_6pm`                   | `byd_soc.mean` where `start_ts = 17:00 prior day local`                                               |
-| `min_soc_overnight`            | `MIN(byd_soc.min)` over buckets `18:00 prior ≤ start_ts ≤ 10:00 row date`                             |
-| `max_soc_prev_daylight`        | `MAX(byd_soc.max)` over buckets `06:00 ≤ start_ts < 18:00 prior day`                                  |
-| `soc_at_11am`                  | `byd_soc.mean` where `start_ts = 10:00 row date local`                                                |
-| `min_outdoor_temp`             | `MIN(outdoor.min)` over the window                                                                    |
-| `avg_indoor_temp`              | `AVG(indoor.mean)` over the window                                                                    |
-| `bom_temp_min`                 | `MIN(weather_temp.min)` over the window                                                               |
-| `bom_temp_mean`                | `AVG(weather_temp.mean)` over the window                                                              |
-| `bom_temp_max`                 | `MAX(weather_temp.max)` over the window                                                               |
-| `bom_feels_like_min`           | `MIN(weather_feels_like.min)` over the window                                                         |
-| `bom_rain_max`                 | `MAX(CAST(weather_rain.state AS REAL))` over the window                                               |
-| `bom_wind_mean`                | `AVG(weather_wind.mean)` over the window                                                              |
-| `bom_gust_max`                 | `MAX(weather_gust.max)` over the window                                                               |
-| `solcast_forecast_tomorrow_wh` | `int(solcast.state * 1000)` where `start_ts = 17:00 prior day`. **NULL** before 2024-10-17.           |
-| `median_indoor_temp`           | `AVG(median_temperature.mean)` over the window. **NULL** before 2024-01-08.                           |
-| `bom_humidity_mean`            | `AVG(weather_humidity.mean)` over the window                                                          |
-| `bom_humidity_max`             | `MAX(weather_humidity.max)` over the window                                                           |
-| `median_indoor_humidity`       | `AVG(median_humidity.mean)` over the window. **NULL** before 2024-01-08.                              |
-| `solar_wh_before_11am`         | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean x 1h)                                         |
-| `consumption_wh_load`          | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                           |
-| `grid_import_wh`               | `consumed.sum @ 11:00 − consumed.sum @ 18:00 prior`                                                   |
-| `grid_export_wh`               | `produced.sum @ 11:00 − produced.sum @ 18:00 prior`                                                   |
-| `battery_charged_wh`           | `charged.sum @ 11:00 − charged.sum @ 18:00 prior`                                                     |
-| `battery_discharged_wh`        | `discharged.sum @ 11:00 − discharged.sum @ 18:00 prior`                                               |
-| `consumption_wh`               | `solar_wh_before_11am + grid_import_wh + battery_discharged_wh − grid_export_wh − battery_charged_wh` |
-| `curtailment_likely`           | `1 if max_soc_prev_daylight ≥ 99 else 0`                                                              |
+| Column                         | Formula                                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `soc_at_6pm`                   | `byd_soc.mean` where `start_ts = 17:00 prior day local`                                                                                                |
+| `min_soc_overnight`            | `MIN(byd_soc.min)` over buckets `18:00 prior ≤ start_ts ≤ 10:00 row date`                                                                              |
+| `max_soc_prev_daylight`        | `MAX(byd_soc.max)` over buckets `06:00 ≤ start_ts < 18:00 prior day`                                                                                   |
+| `soc_at_11am`                  | `byd_soc.mean` where `start_ts = 10:00 row date local`                                                                                                 |
+| `min_outdoor_temp`             | `MIN(outdoor.min)` over the window                                                                                                                     |
+| `avg_indoor_temp`              | `AVG(indoor.mean)` over the window                                                                                                                     |
+| `bom_temp_min`                 | `MIN(weather_temp.min)` over the window                                                                                                                |
+| `bom_temp_mean`                | `AVG(weather_temp.mean)` over the window                                                                                                               |
+| `bom_temp_max`                 | `MAX(weather_temp.max)` over the window                                                                                                                |
+| `bom_feels_like_min`           | `MIN(weather_feels_like.min)` over the window                                                                                                          |
+| `bom_rain_max`                 | `MAX(CAST(weather_rain.state AS REAL))` over the window                                                                                                |
+| `bom_wind_mean`                | `AVG(weather_wind.mean)` over the window                                                                                                               |
+| `bom_gust_max`                 | `MAX(weather_gust.max)` over the window                                                                                                                |
+| `solcast_forecast_tomorrow_wh` | `int(solcast.state * 1000)` where `start_ts = 17:00 prior day`. **NULL** before 2024-10-17.                                                            |
+| `median_indoor_temp`           | `AVG(median_temperature.mean)` over the window. **NULL** before 2024-01-08.                                                                            |
+| `bom_humidity_mean`            | `AVG(weather_humidity.mean)` over the window                                                                                                           |
+| `bom_humidity_max`             | `MAX(weather_humidity.max)` over the window                                                                                                            |
+| `median_indoor_humidity`       | `AVG(median_humidity.mean)` over the window. **NULL** before 2024-01-08.                                                                               |
+| `solar_wh_before_11am`         | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean x 1h)                                                                                          |
+| `consumption_wh_load`          | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                                                                            |
+| `grid_import_wh`               | `consumed.sum @ 11:00 − consumed.sum @ 18:00 prior`                                                                                                    |
+| `grid_export_wh`               | `produced.sum @ 11:00 − produced.sum @ 18:00 prior`                                                                                                    |
+| `battery_charged_wh`           | `charged.sum @ 11:00 − charged.sum @ 18:00 prior`                                                                                                      |
+| `battery_discharged_wh`        | `discharged.sum @ 11:00 − discharged.sum @ 18:00 prior`                                                                                                |
+| `consumption_wh`               | `solar_wh_before_11am + grid_import_wh + battery_discharged_wh − grid_export_wh − battery_charged_wh`                                                  |
+| `curtailment_likely`           | `1 if max_soc_prev_daylight ≥ 99 else 0`                                                                                                               |
 | `guests`                       | `1 if MAX(guests_sensor.mean over window) > 0.5 else 0`. **NULL** if the guests sensor has no data for the window. Sensor configured in `config.yaml`. |
 
 All energy values are stored as **integer Wh**. Round to nearest whole Wh.
@@ -363,15 +363,15 @@ These three samples cover both DST regimes (AEST and AEDT), both providers activ
 
 ## Coverage and gaps
 
-| Period                                     | Behaviour                                                                            |
-| ------------------------------------------ | ------------------------------------------------------------------------------------ |
-| Before 2023-11-27                          | No data; skip                                                                        |
-| 2023-11-28 → first available date          | First complete window                                                                |
-| Configured absence periods                 | Flagged but not excluded (`absence_period = 1`)                                      |
-| Configured data gap dates                  | Flagged but not excluded (`data_gap = 1`); energy columns unreliable                 |
-| Before guests sensor has data              | `guests` is NULL                                                                     |
-| Once guests sensor is present              | `guests = 1` when the sensor reads > 0.5 for any hour in the window                 |
-| Today                                      | Skipped (window incomplete)                                                          |
+| Period                            | Behaviour                                                            |
+| --------------------------------- | -------------------------------------------------------------------- |
+| Before 2023-11-27                 | No data; skip                                                        |
+| 2023-11-28 → first available date | First complete window                                                |
+| Configured absence periods        | Flagged but not excluded (`absence_period = 1`)                      |
+| Configured data gap dates         | Flagged but not excluded (`data_gap = 1`); energy columns unreliable |
+| Before guests sensor has data     | `guests` is NULL                                                     |
+| Once guests sensor is present     | `guests = 1` when the sensor reads > 0.5 for any hour in the window  |
+| Today                             | Skipped (window incomplete)                                          |
 
 ## Energy balance as a QA signal
 

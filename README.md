@@ -233,7 +233,23 @@ Sliders for temp, Solcast forecast, humidity, SOC, and confidence level update t
 
 **3. Set the HA server** on each node (they'll show as unconfigured until you select your Home Assistant connection).
 
-**4. Deploy and test** using the Manual trigger button. Check the debug sidebar for the full result object.
+**4. Update the sensor entity IDs.** The flow's state-reader nodes are pre-populated with the author's sensor names. Open each of the five "Get …" nodes and replace the entity ID with your own:
+
+| Node | Entity ID to replace | What it reads |
+| ---- | -------------------- | -------------- |
+| Get overnight temp | `sensor.overnight_forecast_temp_mean` | Your overnight temp template sensor (see above) |
+| Get overnight humidity | `sensor.overnight_forecast_humidity_mean` | Your overnight humidity template sensor (see above) |
+| Get Solcast tomorrow | `sensor.solcast_pv_forecast_forecast_tomorrow` | Your Solcast forecast entity |
+| Get battery SOC | `sensor.byd_battery_box_premium_hv_state_of_charge` | Your battery's state-of-charge sensor |
+| Get min SOC cutoff | `sensor.byd_battery_box_premium_hv_soc_minimum` | Your battery's minimum SOC sensor |
+
+**5. Update the battery capacity** in the "Three-zone linear model" function node. Near the top, change `BATTERY_KWH` to match your battery's usable capacity in kWh:
+
+```js
+const BATTERY_KWH = 13.8;  // ← replace with your battery's usable capacity
+```
+
+**6. Deploy and test** using the Manual trigger button. Check the debug sidebar for the full result object.
 
 ### Updating the model
 

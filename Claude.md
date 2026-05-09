@@ -87,7 +87,11 @@ ha-safe-export/
 │   ├── extract.py       # build/refresh the dataset DB
 │   ├── schema.sql       # canonical DDL for the dataset DB
 │   ├── model.py         # three-zone predictor + predict()
-│   └── windows.py       # timezone-aware window math
+│   ├── windows.py       # timezone-aware window math
+│   └── migrations/      # incremental schema updates (applied automatically on startup)
+│       ├── 001_add_weather_forecast.sql   # v1.0.0 → v1.1.0
+│       ├── 002_add_humidity.sql           # v1.1.0 → v1.2.0
+│       └── 003_add_data_gap.sql           # v1.2.0 → v1.3.0
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py      # shared test fixtures (test Config)
@@ -95,6 +99,7 @@ ha-safe-export/
 │   ├── test_extract.py
 │   └── test_model.py
 ├── data/                # gitignored; holds the dataset DB
+├── CHANGELOG.md         # version history; update after schema or model changes
 └── pyproject.toml
 ```
 
@@ -108,6 +113,17 @@ The extract script must be incremental:
 4. Update `extraction_meta` with `last_full_extraction = now()`.
 
 Provide a `--rebuild` flag that drops and re-extracts all rows. Useful when methodology changes.
+
+## Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format. Update it whenever:
+
+- The dataset schema version changes (new migration added)
+- Model coefficients are retrained and updated in `config.yaml`
+- A new tool or integration artifact is added
+- A significant bug fix lands in extraction or model logic
+
+Add the new entry under `## [Unreleased]` at the top; move it to a dated version heading when tagging a release.
 
 ## When in doubt, ask
 
