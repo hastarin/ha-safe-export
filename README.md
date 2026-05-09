@@ -261,25 +261,34 @@ The Node-RED flow writes the result to `input_text.safe_export_detail`. You can 
 
 ```yaml
 template:
-  - sensor:
+  - trigger:
+      - trigger: state
+        entity_id: input_text.safe_export_detail
+    sensor:
       - name: "Overnight Forecast Safe Power Export"
         unique_id: overnight_forecast_safe_power_export
         unit_of_measurement: "Wh"
         device_class: energy
         state_class: measurement
+
         variables:
-          j: "{{ states('input_text.safe_export_detail') | from_json }}"
-        state: "{{ j.p75 if j and j.p75 is defined else 0 }}"
+          j: >
+            {% set raw = states('input_text.safe_export_detail') %}
+            {% set parsed = raw | from_json(default=None) %}
+            {{ parsed }}
+
+        state: "{{ j.p75 if j else 'unknown' }}"
+
         attributes:
-          zone: "{{ j.zone if j and j.zone is defined else none }}"
-          temp: "{{ j.temp if j and j.temp is defined else none }}"
-          soc: "{{ j.soc if j and j.soc is defined else none }}"
-          avail_kwh: "{{ j.avail_kwh if j and j.avail_kwh is defined else none }}"
-          p50: "{{ j.p50 if j and j.p50 is defined else none }}"
-          p75: "{{ j.p75 if j and j.p75 is defined else none }}"
-          p90: "{{ j.p90 if j and j.p90 is defined else none }}"
-          p95: "{{ j.p95 if j and j.p95 is defined else none }}"
-          at: "{{ j.at if j and j.at is defined else none }}"
+          zone: "{{ j.zone if j else 'unknown' }}"
+          temp: "{{ j.temp if j else 'unknown' }}"
+          soc: "{{ j.soc if j else 'unknown' }}"
+          avail_kwh: "{{ j.avail_kwh if j else 'unknown' }}"
+          p50: "{{ j.p50 if j else 'unknown' }}"
+          p75: "{{ j.p75 if j else 'unknown' }}"
+          p90: "{{ j.p90 if j else 'unknown' }}"
+          p95: "{{ j.p95 if j else 'unknown' }}"
+          at: "{{ j.at if j else 'unknown' }}"
 ```
 
 The sensor's state is P75 (a reasonable default for most nights). All four confidence levels and the full prediction context are available as attributes. Change `j.p75` in the `state:` line to `j.p90` if you prefer a more conservative default.
