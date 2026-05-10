@@ -14,6 +14,7 @@ class DayWindows:
     """
 
     ts_06_prior: int  # 06:00 local prior day — daylight window start (for max_soc_prev_daylight)
+    ts_12_prior: int  # 12:00 local prior day — afternoon window start (for bom_temp_afternoon_max)
     ts_17_prior: int  # 17:00 local prior day — soc_at_6pm bucket (covers 17:00–18:00)
     ts_18_prior: int  # 18:00 local prior day — window start: agg lower bound + cum-delta start
     ts_10_today: int  # 10:00 local row date  — soc_at_11am bucket + agg upper bound (inclusive)
@@ -34,6 +35,7 @@ def windows_for_date(morning_date: date, tz: ZoneInfo) -> DayWindows:
 
     return DayWindows(
         ts_06_prior=ts(prior, 6),
+        ts_12_prior=ts(prior, 12),
         ts_17_prior=ts(prior, 17),
         ts_18_prior=ts(prior, 18),
         ts_10_today=ts(morning_date, 10),

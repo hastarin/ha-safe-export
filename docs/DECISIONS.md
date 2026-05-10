@@ -278,39 +278,44 @@ The extraction script detects likely new gaps automatically: a large energy imba
 
 ## Modelling (Phase 2)
 
-### Three-zone linear model for overnight consumption
+### Four-zone model for overnight consumption
 
-**Decision:** Use three separate linear regression models keyed by forecast overnight mean temperature (`bom_temp_mean`): Heating (< 19°C), Mild (19–21°C), Cooling (> 21°C). The Mild zone uses an empirical percentile table rather than a regression.
+**Decision:** Use four separate models keyed by forecast overnight mean temperature (`bom_temp_mean`): Heating (< 17°C, OLS regression), Warm boundary (17–19°C, empirical percentile table), Mild (19–21°C, empirical percentile table), Cooling (> 21°C, OLS regression).
 **Status:** Locked.
-**Date:** 2026-05-07
+**Date:** 2026-05-11 (split from original three-zone decision dated 2026-05-07)
 
-**Rationale:** A single linear model across all temperatures achieves only R²=0.44 because overnight consumption is U-shaped with temperature — driven by heating below ~15°C and cooling above ~23°C. Splitting by zone allows each model to operate in its linear regime. The Mild zone has R²≈0.03 (temperature explains nothing there) so a percentile table is honest and simpler than a model.
+**Rationale:** The original heating zone spanned < 19°C as a single OLS model. Analysis of held-out residuals revealed a systematic +1.47 kWh mean bias in the 17–19°C sub-band, with 19 of 118 nights showing errors > 3 kWh. Investigation ruled out all available weather signals as explanatory: temperature range, humidity, wind, Solcast level, indoor temperature, indoor–outdoor delta, and season all showed near-zero correlation with the residuals (r ≤ 0.10). The variance is driven by human behaviour (whether heating ran hard on a given night) which no external measurement can predict.
 
-**Coefficients (fitted on chronological 80% split, training set ≤ 2025-11-16):**
+With no predictive signal, an OLS regression in this band is no better than a mean estimate but carries the overhead of coefficients that can mislead. An empirical percentile table is more honest: it accurately represents the historical distribution and provides correctly-sized safety buffers without implying a spurious relationship with temperature.
 
-- Heating with Solcast: `19.7258 − 0.7756×temp − 0.0703×solcast_kwh` (R²=0.77, n=287)
-- Heating temp-only: `18.8039 − 0.8614×temp` (R²=0.71, n=574, fallback when Solcast unavailable)
+**Coefficients and percentiles (config.yaml):**
+
+- Heating with Solcast: `19.7258 − 0.7756×temp − 0.0703×solcast_kwh` (R²=0.77, n=287, temp < 17°C)
+- Heating temp-only: `18.8039 − 0.8614×temp` (R²=0.71, fallback when Solcast unavailable)
+- Warm boundary empirical: P50=4.76, P75=6.00, P90=6.99, P95=8.05 kWh (n=114, 17–19°C)
+- Mild empirical: P50=4.60, P75=6.58, P90=7.83, P95=8.43 kWh (n=78, 19–21°C)
 - Cooling with humidity: `−13.4046 + 0.7231×temp + 0.0595×humidity_pct` (R²=0.37, n=49)
 - Cooling temp-only: `−6.756 + 0.660×temp` (fallback when humidity unavailable)
-- Mild empirical: P50=4.60, P75=6.58, P90=7.83, P95=8.43 kWh
 
-**Held-out test performance (date > 2025-11-16, n=169):** MAE=1.75 kWh overall; P95 error buffer (3.56 kWh) covers 92% of test residuals — well-calibrated for the default 90% confidence setting.
+**Held-out test performance (stratified, every 5th night per zone):** violation rate 2.4% (target ≤5%); P95 error buffer (3.56 kWh) well-calibrated on cold heating nights.
 
-**Known weakness:** The cooling zone has only 49 training nights (one summer). R²=0.37 is expected to improve materially once a second summer of data is available.
+**Known weakness:** The cooling zone has only ~49 training nights (one summer). R²=0.37 is expected to improve materially once a second summer of data is available.
 
 ---
 
-### Solcast full-day forecast as dual-purpose feature
+### Solcast full-day forecast as cloud-cover proxy only; no explicit solar credit in export formula
 
-**Decision:** Use `solcast_forecast_tomorrow_wh` (the Solcast full-day PV forecast for tomorrow, read at 6pm) as both a cloud-cover proxy in the consumption model and an implicit morning-solar estimate. No separate solar sub-model is built.
+**Decision:** Use `solcast_forecast_tomorrow_wh` as a cloud-cover proxy feature in the consumption regression only. The safe-export formula does **not** include a solar credit term.
 **Status:** Locked.
-**Date:** 2026-05-07
+**Date:** 2026-05-11
 
-**Rationale:** Solcast correlates with `solar_wh_before_11am` at r=0.778 (n=522 non-absence nights), which is stronger than any other available predictor. The full-day forecast averages ~21% of actual pre-11am solar (ratio stable across seasons: 0.19–0.24), so regression coefficients naturally learn the scaling. Building a separate solar sub-model would add complexity without meaningfully improving prediction accuracy at current dataset size.
+**Rationale:** The SPEC formula includes a `+ predicted_solar` term, but after evaluation this was found to be unsafe in practice. Morning solar arrives in a ~3-hour burst (roughly 8–11am), but the battery must survive the full 17-hour overnight window on its own. Adding the full `solcast × 0.21` credit to the export formula produced an 86.6% safety violation rate on the stratified test set because it inflated recommendations beyond what the battery could sustain through the night.
 
-**Evidence:** Ratio of `solar_wh_before_11am / solcast_forecast_tomorrow_wh` across seasons: summer=0.22, autumn=0.19, winter=0.20, spring=0.24. The consistency confirms that one coefficient handles the conversion adequately.
+A capped variant (`min(solcast × 0.21, total_needed × 3/17)`) — crediting only the solar that covers the 3-hour morning window fraction of overnight load — was evaluated and reduced violations to 12.6% vs the ≤5% target. Analysis showed those violations were driven by warm-boundary consumption model errors (now addressed by the four-zone split), but the evaluation complexity grew high enough that a conservative decision was made: exclude solar credit for now and revisit once the model is stable in live operation.
 
-**Limitation:** Solcast data is only available from 2024-10-17 (559 nights). The model gracefully falls back to the temperature-only variant when `solcast_forecast_tomorrow_wh` is NULL.
+The Solcast coefficient in the consumption regression (−0.070291 kWh per kWh Solcast) continues to absorb an implicit partial solar signal via its cloud-cover role.
+
+**Revisit when:** at least one full season of live operation data confirms the violation rate and utilisation, and the solar credit formula can be evaluated against real outcomes rather than held-out historical data.
 
 ---
 
@@ -338,12 +343,42 @@ The extraction script detects likely new gaps automatically: a large energy imba
 
 ---
 
+---
+
+### Calendar features: evaluated and rejected at current data size
+
+**Decision:** Day-of-week, season, and other calendar features are not included in `PredictInputs` or the model.
+**Status:** Locked (revisit at ~1500+ nights).
+**Date:** 2026-05-10
+
+**Rationale:** ENERGY_ANALYSIS.md evaluated calendar features against the dataset and found no meaningful signal — overnight consumption is driven by temperature and HVAC load, not the day of the week. The U-shaped temperature relationship (heating below 19°C, cooling above 21°C) already captures the seasonal variation. Adding calendar features at current dataset size (~845 nights) would add parameters without predictive benefit and risk overfitting to incidental patterns in a short history.
+
+**What was considered:**
+
+- _Day of week_ — no prior evidence that weekends drive materially different overnight loads vs weekdays in a single-occupant household.
+- _Season_ — already implicitly captured by `bom_temp_mean` zone selection.
+- _Heating-effort delta (`avg_indoor_temp − bom_temp_mean`)_ — theoretically appealing as a proxy for heating aggressiveness, but tested and found to be redundant. `r(bom_temp_mean, delta) = −0.948`: on cold nights the outdoor temp is low and the indoor–outdoor gap is automatically large, so the two variables move together almost perfectly. Frisch-Waugh partial regression (n=414 heating-zone nights with Solcast) shows R² gain of only +0.036 (0.70 → 0.74), and the mean model residual in the highest-delta tercile (10.4°C gap, +0.36 kWh) is indistinguishable from the lowest-delta tercile (4.5°C gap, +0.35 kWh). The delta carries no independent signal after `bom_temp_mean` is controlled for. Would only become useful if heating behaviour varied significantly — e.g. a configurable thermostat setpoint sensor were added.
+
+**Revisit when:** dataset exceeds ~1500 nights, or when a clear residual pattern appears in heating-zone model errors stratified by day-of-week.
+
+---
+
 ## Open / deferred decisions
 
 These are explicitly _not_ settled. They are recorded so that an agent asked to make one of these choices recognises it as a real decision requiring discussion, not a default.
 
-- **Provider handling.** Provider is recorded in the dataset but is not passed to `predict()` — it was only affecting the reasoning string and has been removed from the inference interface. Separate models per provider, or provider as a quantitative feature? The transition between provider periods represents real tariff-structure differences. Deferred until enough data under each tariff exists to evaluate.
-- **Cooling model improvement.** Only 49 training nights (one summer). Re-evaluate coefficients and consider adding `median_indoor_humidity` once a second full summer is in the dataset (expected: late 2026).
+### Sensibo HVAC integration — setpoint and mode as future features
+
+Sensibo AC integration added to HA on 2026-05-10. Once sufficient history accumulates, evaluate whether HVAC setpoint and mode (heat/cool/off) from Sensibo sensors can improve model accuracy — particularly:
+
+- _Setpoint_ as a direct measure of heating/cooling aggressiveness, replacing the indirect and redundant `avg_indoor_temp − bom_temp_mean` delta (see "Calendar features" decision above).
+- _HVAC mode_ as a binary flag to distinguish heating nights from cooling nights more reliably than the temperature-zone boundaries, and to detect nights where the system was off entirely (e.g. mild nights where the user chose not to run AC despite temperature crossing the 19°C or 21°C thresholds).
+
+**Pre-conditions before evaluating:** at least one full heating season (winter 2026) and one full cooling season of Sensibo data; verify that HA is recording setpoint and mode to `statistics` (not just `states`) so they can be extracted at hourly granularity.
+
+- **Solar credit formula.** No solar credit is applied in the current export formula (see locked decision above). Variant C (capped credit `min(solcast×0.21, needed×3/17)`) met the utilisation target but not the violation target in testing with the old three-zone model. Now that warm-boundary nights have their own empirical zone, variant C should be re-evaluated against a full season of live operation data before being reconsidered.
+- **Provider handling.** Provider is recorded in the dataset but is not passed to `predict()`. Separate models per provider, or provider as a quantitative feature? Deferred until enough data under each tariff exists to evaluate.
+- **Cooling model improvement.** Only ~49 training nights (one summer). Re-evaluate coefficients and consider adding `median_indoor_humidity` once a second full summer is in the dataset (expected: late 2026).
 - **Retraining cadence.** Daily, weekly, monthly? Triggered by error spikes or scheduled? Deferred to Phase 3.
 - **Live deployment safety.** What backstops protect against a model going haywire in production (e.g. an absolute reserve-floor hardstop independent of the model output)? Deferred to Phase 3.
 - **Generalisation to other hardware.** Battery capacity, reserve fraction, and sensor names are now configurable via `config.yaml`. Phase 3 will surface this configuration through the HA integration UI so users don't need to edit YAML manually.

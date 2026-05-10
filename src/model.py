@@ -1,16 +1,24 @@
-"""Three-zone linear model for overnight energy consumption prediction.
+"""Four-zone model for overnight energy consumption prediction.
 
 Produces a safe-export recommendation at 6pm on day N: the maximum Wh that can
 be exported between 6–9pm such that SoC at 11am next day remains above a
 configurable safety threshold with ~90% confidence.
 
 Zones are determined by forecast overnight mean temperature (bom_temp_mean):
-  - Heating  : < 19 °C  — OLS on temp + Solcast (R²=0.77), temp-only fallback (R²=0.71)
-  - Mild     : 19–21 °C — empirical percentile table (no predictive signal from temp)
-  - Cooling  : > 21 °C  — OLS on temp + humidity (R²=0.37, weak; improves with more data)
+  - Heating       : < 17 °C  — OLS on temp + Solcast (R²=0.77), temp-only fallback (R²=0.71)
+  - Warm boundary : 17–19 °C — empirical percentile table (no weather signal in this band)
+  - Mild          : 19–21 °C — empirical percentile table (no predictive signal from temp)
+  - Cooling       : > 21 °C  — OLS on temp + humidity (R²=0.37, weak; improves with more data)
 
-Coefficients are loaded from config.yaml and updated after each retraining run.
-Held-out test MAE = 1.75 kWh; P95 error buffer (3.56 kWh) covers 92% of test residuals.
+Coefficients and percentile tables are loaded from config.yaml.
+Held-out test MAE = 1.75 kWh (heating zone); violation rate 2.4% on stratified test set.
+
+The safe-export formula:
+  E_export_max = (SoC_now − min_soc) × capacity − predicted_consumption
+
+Solar credit is deliberately excluded: morning solar arrives in a ~3-hour burst
+(8–11am) but the battery must survive the full 17-hour window on its own. Including
+solar inflates the recommendation beyond what is safe overnight. See DECISIONS.md.
 """
 
 from __future__ import annotations
@@ -39,14 +47,15 @@ class PredictInputs:
 
     solcast_forecast_tomorrow_wh: float | None = None
     """Solcast full-day PV forecast for tomorrow (Wh). Available from Oct 2024 onward.
-    Used as a cloud-cover proxy in the heating model and as a morning-solar estimate."""
+    Used as a cloud-cover proxy in the consumption model and to estimate morning solar credit."""
 
     bom_humidity_mean: float | None = None
     """Forecast overnight mean relative humidity (%). Used in the cooling model."""
 
-    min_soc: float = 0.10
+    min_soc: float | None = None
     """Battery's configured minimum discharge floor (fraction, e.g. 0.10 = 10%).
-    Pass whatever the HA min SoC is set to at decision time — e.g. 0.20 in storm mode."""
+    Defaults to cfg.battery_reserve_fraction when None. Pass an explicit value to
+    override at call time — e.g. 0.20 in storm mode."""
 
     confidence: float = 0.90
     """Desired confidence level for the safety constraint. Supported: 0.50, 0.75, 0.90, 0.95."""
@@ -65,7 +74,7 @@ class PredictResult:
     error_buffer_kwh: float
     """One-sided uncertainty buffer applied at the requested confidence level, kWh."""
 
-    zone: Literal["heating", "mild", "cooling"]
+    zone: Literal["heating", "warm_boundary", "mild", "cooling"]
     """Thermal zone used for this prediction."""
 
     model_variant: str
@@ -93,12 +102,12 @@ def _select_percentile(percentiles: dict[str, float], confidence: float) -> floa
 def _predict_consumption(
     inputs: PredictInputs,
     cfg: Config,
-) -> tuple[float, float, str, Literal["heating", "mild", "cooling"]]:
+) -> tuple[float, float, str, Literal["heating", "warm_boundary", "mild", "cooling"]]:
     """Return (point_estimate_kwh, p95_buffer_kwh, model_variant, zone)."""
     m = cfg.model
     temp = inputs.bom_temp_mean
 
-    if temp < 19.0:
+    if temp < 17.0:
         if inputs.solcast_forecast_tomorrow_wh is not None:
             solcast_kwh = inputs.solcast_forecast_tomorrow_wh / 1000.0
             est = m.heating_intercept + m.heating_b_temp * temp + m.heating_b_solcast * solcast_kwh
@@ -107,12 +116,12 @@ def _predict_consumption(
             est = m.heating_temp_only_intercept + m.heating_temp_only_b_temp * temp
             return est, m.heating_p95_buffer_kwh, "heating_temp_only", "heating"
 
+    elif temp < 19.0:
+        # Warm boundary: no predictive weather signal, use empirical percentile table
+        return m.warm_boundary_p50, 0.0, "warm_boundary_empirical", "warm_boundary"
+
     elif temp <= 21.0:
-        mild_percentiles = {
-            "p50": m.mild_p50, "p75": m.mild_p75, "p90": m.mild_p90, "p95": m.mild_p95,
-        }
-        est = mild_percentiles["p50"]
-        return est, 0.0, "mild_empirical", "mild"
+        return m.mild_p50, 0.0, "mild_empirical", "mild"
 
     else:  # cooling
         if inputs.bom_humidity_mean is not None:
@@ -139,17 +148,25 @@ def predict(inputs: PredictInputs, cfg: Config) -> PredictResult:
     is identical. Returns a PredictResult with safe_export_wh ≥ 0.
     """
     capacity_wh = cfg.battery_capacity_wh
+    min_soc = inputs.min_soc if inputs.min_soc is not None else cfg.battery_reserve_fraction
 
     available_discharge_wh = max(
-        0.0, (inputs.soc_at_6pm / 100.0 - inputs.min_soc) * capacity_wh
+        0.0, (inputs.soc_at_6pm / 100.0 - min_soc) * capacity_wh
     )
 
     point_kwh, p95_buffer_kwh, variant, zone = _predict_consumption(inputs, cfg)
 
     m = cfg.model
     mild_percentiles = {"p50": m.mild_p50, "p75": m.mild_p75, "p90": m.mild_p90, "p95": m.mild_p95}
+    warm_boundary_percentiles = {
+        "p50": m.warm_boundary_p50, "p75": m.warm_boundary_p75,
+        "p90": m.warm_boundary_p90, "p95": m.warm_boundary_p95,
+    }
 
-    if zone == "mild":
+    if zone == "warm_boundary":
+        consumption_estimate_kwh = _select_percentile(warm_boundary_percentiles, inputs.confidence)
+        buffer_kwh = 0.0
+    elif zone == "mild":
         consumption_estimate_kwh = _select_percentile(mild_percentiles, inputs.confidence)
         buffer_kwh = 0.0
     else:
@@ -173,7 +190,7 @@ def predict(inputs: PredictInputs, cfg: Config) -> PredictResult:
             else "."
         ),
         f"Available discharge: {available_discharge_wh/1000:.2f} kWh "
-        f"(SoC {inputs.soc_at_6pm:.0f}% → {inputs.min_soc*100:.0f}% floor).",
+        f"(SoC {inputs.soc_at_6pm:.0f}% → {min_soc*100:.0f}% floor).",
         f"Safe export: {safe_export_wh/1000:.2f} kWh.",
     ]
 

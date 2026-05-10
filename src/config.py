@@ -61,6 +61,10 @@ class ModelConfig:
     mild_p75: float
     mild_p90: float
     mild_p95: float
+    warm_boundary_p50: float
+    warm_boundary_p75: float
+    warm_boundary_p90: float
+    warm_boundary_p95: float
     heating_p95_buffer_kwh: float
     cooling_p95_buffer_kwh: float
 
@@ -183,6 +187,10 @@ def load_config(path: Path) -> Config:
         mild_p75=float(m["mild_p75"]),
         mild_p90=float(m["mild_p90"]),
         mild_p95=float(m["mild_p95"]),
+        warm_boundary_p50=float(m["warm_boundary_p50"]),
+        warm_boundary_p75=float(m["warm_boundary_p75"]),
+        warm_boundary_p90=float(m["warm_boundary_p90"]),
+        warm_boundary_p95=float(m["warm_boundary_p95"]),
         heating_p95_buffer_kwh=float(m["heating_p95_buffer_kwh"]),
         cooling_p95_buffer_kwh=float(m["cooling_p95_buffer_kwh"]),
     )

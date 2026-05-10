@@ -1,4 +1,4 @@
--- Schema version: 1.3.0
+-- Schema version: 1.4.0
 CREATE TABLE IF NOT EXISTS daily_observations (
     date TEXT PRIMARY KEY,                  -- 'YYYY-MM-DD' (the 11am-endpoint date)
     provider TEXT NOT NULL,                 -- 'ea' | 'amber' | 'globird'
@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS daily_observations (
     solcast_forecast_tomorrow_wh INTEGER,   -- Wh, state at 17:00 prior day × 1000; NULL before Oct 2024
     median_indoor_temp REAL,                -- °C, AVG(mean) over 6pm–11am window; NULL before Jan 2024
     bom_temp_max REAL,                      -- °C, MAX(max) over 6pm–11am window
+    bom_temp_afternoon_max REAL,            -- °C, MAX(max) over 12:00–18:00 prior day
     bom_humidity_mean REAL,                 -- %, AVG(mean) over 6pm–11am window
     bom_humidity_max REAL,                  -- %, MAX(max) over 6pm–11am window
     median_indoor_humidity REAL,            -- %, AVG(mean) over 6pm–11am window; NULL before Jan 2024

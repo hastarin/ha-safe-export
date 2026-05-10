@@ -38,6 +38,12 @@ def test_heating_zone_selected(test_cfg):
     assert result.zone == "heating"
 
 
+def test_warm_boundary_zone_selected(test_cfg):
+    inp = PredictInputs(soc_at_6pm=80, bom_temp_mean=17.5)
+    result = predict(inp, test_cfg)
+    assert result.zone == "warm_boundary"
+
+
 def test_mild_zone_selected(test_cfg):
     inp = PredictInputs(soc_at_6pm=80, bom_temp_mean=20.0)
     result = predict(inp, test_cfg)
@@ -86,14 +92,15 @@ def test_safe_export_never_negative(test_cfg):
     assert result.safe_export_wh >= 0.0
 
 
-def test_safe_export_bounded_by_available_discharge(test_cfg):
-    inp = PredictInputs(soc_at_6pm=100.0, bom_temp_mean=20.0)
+def test_safe_export_bounded_by_available(test_cfg):
+    # Safe export can never exceed available discharge — no solar credit applied.
+    inp = PredictInputs(soc_at_6pm=100.0, bom_temp_mean=20.0, solcast_forecast_tomorrow_wh=30000)
     result = predict(inp, test_cfg)
     assert result.safe_export_wh <= result.available_discharge_wh
 
 
 def test_available_discharge_calculation(test_cfg):
-    # soc=80%, min_soc=10%, capacity=13800 → available = 0.70 * 13800 = 9660 Wh
+    # soc=80%, reserve=10% (from cfg), capacity=13800 → available = 0.70 * 13800 = 9660 Wh
     inp = PredictInputs(soc_at_6pm=80.0, bom_temp_mean=20.0)
     result = predict(inp, test_cfg)
     assert abs(result.available_discharge_wh - 9660.0) < 1.0
@@ -150,9 +157,9 @@ def test_reasoning_non_empty(test_cfg):
 
 
 @pytest.mark.parametrize("date,expected_zone", [
-    ("2026-02-07", "heating"),   # 17.2°C, mild-ish Feb night
-    ("2026-03-20", "heating"),   # 17.0°C
-    ("2025-07-17", "heating"),   # 10.7°C, cold winter night
+    ("2026-02-07", "warm_boundary"),   # 17.2°C
+    ("2026-03-20", "warm_boundary"),   # 17.0°C
+    ("2025-07-17", "heating"),         # 10.7°C, cold winter night
 ])
 def test_fixture_zone(date, expected_zone, test_cfg):
     result = predict(_inputs_from_fixture(date), test_cfg)
@@ -160,16 +167,19 @@ def test_fixture_zone(date, expected_zone, test_cfg):
 
 
 def test_fixture_jul17_cold_winter_no_export(test_cfg):
-    # Jul 17: 58.7% SoC, 10.7°C — predicted consumption ~11.5 kWh,
-    # available discharge only ~5.3 kWh → safe export should be 0
+    # Jul 17: 58.7% SoC, 10.7°C, Solcast 8789 Wh.
+    # Available discharge ~6.7 kWh.
+    # Predicted consumption ~10.8 kWh + buffer ~3.1 kWh = ~13.9 kWh needed.
+    # Still short — safe export remains 0.
     result = predict(_inputs_from_fixture("2025-07-17"), test_cfg)
     assert result.safe_export_wh == 0.0
 
 
 def test_fixture_feb07_full_battery_warm_has_export(test_cfg):
-    # Feb 7: 100% SoC, 17.2°C — should have meaningful export headroom
+    # Feb 7: 100% SoC, 17.2°C — warm boundary zone, P90 budget 6.99 kWh.
+    # Available 12.4 kWh − 6.99 kWh = ~5.4 kWh safe export.
     result = predict(_inputs_from_fixture("2026-02-07"), test_cfg)
-    assert result.safe_export_wh > 2000.0
+    assert result.safe_export_wh > 3000.0
 
 
 def test_fixture_consumption_estimate_in_range(test_cfg):
@@ -178,6 +188,15 @@ def test_fixture_consumption_estimate_in_range(test_cfg):
     result = predict(_inputs_from_fixture("2025-07-17"), test_cfg)
     actual_kwh = FIXTURES["2025-07-17"]["consumption_wh"] / 1000.0
     assert abs(result.predicted_consumption_kwh - actual_kwh) < 4.0
+
+
+def test_solcast_affects_heating_consumption_estimate(test_cfg):
+    # Solcast is used as a cloud-cover proxy in the heating OLS model.
+    # High Solcast (sunny tomorrow) → lower predicted consumption → more export headroom.
+    base = dict(soc_at_6pm=100.0, bom_temp_mean=12.0)
+    cloudy = predict(PredictInputs(**base, solcast_forecast_tomorrow_wh=5000), test_cfg)
+    sunny = predict(PredictInputs(**base, solcast_forecast_tomorrow_wh=40000), test_cfg)
+    assert sunny.safe_export_wh > cloudy.safe_export_wh
 
 
 def test_higher_min_soc_reduces_export(test_cfg):

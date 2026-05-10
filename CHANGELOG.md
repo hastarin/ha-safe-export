@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-05-11
+
+### Added
+
+- **Warm boundary zone (17–19°C)** — split from the old heating zone, now uses an empirical percentile table (P50=4.76, P75=6.00, P90=6.99, P95=8.05 kWh) rather than OLS regression. Investigation showed no weather signal (temperature, humidity, wind, Solcast, indoor temp, temp swing) explains consumption variance in this band; the variance is driven by human behaviour. Stratified test violation rate: 0% for this zone.
+- `bom_temp_afternoon_max` dataset column — `MAX(max)` of BOM temperature sensor over 12:00–18:00 prior day (afternoon peak before the 6pm decision). Migration `004_add_afternoon_temp.sql` (schema v1.3.0 → v1.4.0). Added as part of investigating warm-boundary errors; retained as a useful feature candidate for future model iterations.
+- `ts_12_prior` timestamp in `DayWindows` — 12:00 local prior day, used for afternoon temperature window.
+- `warm_boundary_p50/p75/p90/p95` fields in `ModelConfig` and `config.yaml`.
+
+### Changed
+
+- Model renamed from three-zone to four-zone. `PredictResult.zone` now includes `"warm_boundary"` as a valid value.
+- Solar credit removed from the export formula. After evaluation, adding `solcast × 0.21` to the formula produced an 86.6% safety violation rate; a capped variant reduced this but not to the ≤5% target with the data available. Conservative decision: no solar credit until live operation data allows proper evaluation. Solcast continues to be used as a cloud-cover proxy in the heating OLS model.
+- `PredictResult.solar_forecast_wh` field removed.
+- `DECISIONS.md` updated: three-zone entry superseded by four-zone entry; solar credit decision locked; open decision entry resolved.
+- `tools/predictor.html` updated to four-zone model: warm boundary zone added, zone routing updated, percentile lookup corrected.
+- `tools/nodered-flow.json` updated to four-zone model: WARM constant added, zone logic split at 17°C, empirical table handling unified for warm_boundary and mild zones.
+
 ## [1.3.0] — 2026-05-09
 
 ### Added

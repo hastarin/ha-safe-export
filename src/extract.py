@@ -138,6 +138,13 @@ def extract_row(
     bom_temp_min = _r1("MIN(min)", "weather_temp")
     bom_temp_mean = _r1("AVG(mean)", "weather_temp")
     bom_temp_max = _r1("MAX(max)", "weather_temp")
+
+    row = ha.execute(
+        "SELECT MAX(max) FROM statistics WHERE metadata_id = ? AND start_ts >= ? AND start_ts <= ?",
+        (ids["weather_temp"], w.ts_12_prior, w.ts_17_prior),
+    ).fetchone()
+    bom_temp_afternoon_max = round(row[0], 1) if row and row[0] is not None else None
+
     bom_feels_like_min = _r1("MIN(min)", "weather_feels_like")
     bom_wind_mean = _r1("AVG(mean)", "weather_wind")
     bom_gust_max = _r1("MAX(max)", "weather_gust")
@@ -208,6 +215,7 @@ def extract_row(
         "solcast_forecast_tomorrow_wh": solcast_forecast_tomorrow_wh,
         "median_indoor_temp": median_indoor_temp,
         "bom_temp_max": bom_temp_max,
+        "bom_temp_afternoon_max": bom_temp_afternoon_max,
         "bom_humidity_mean": bom_humidity_mean,
         "bom_humidity_max": bom_humidity_max,
         "median_indoor_humidity": median_indoor_humidity,
@@ -325,7 +333,7 @@ def extract_all(
                 min_outdoor_temp, avg_indoor_temp,
                 bom_temp_min, bom_temp_mean, bom_feels_like_min, bom_rain_max,
                 bom_wind_mean, bom_gust_max, solcast_forecast_tomorrow_wh,
-                median_indoor_temp, bom_temp_max,
+                median_indoor_temp, bom_temp_max, bom_temp_afternoon_max,
                 bom_humidity_mean, bom_humidity_max, median_indoor_humidity,
                 solar_wh_before_11am, consumption_wh, consumption_wh_load,
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
@@ -336,7 +344,7 @@ def extract_all(
                 :min_outdoor_temp, :avg_indoor_temp,
                 :bom_temp_min, :bom_temp_mean, :bom_feels_like_min, :bom_rain_max,
                 :bom_wind_mean, :bom_gust_max, :solcast_forecast_tomorrow_wh,
-                :median_indoor_temp, :bom_temp_max,
+                :median_indoor_temp, :bom_temp_max, :bom_temp_afternoon_max,
                 :bom_humidity_mean, :bom_humidity_max, :median_indoor_humidity,
                 :solar_wh_before_11am, :consumption_wh, :consumption_wh_load,
                 :grid_import_wh, :grid_export_wh, :battery_charged_wh, :battery_discharged_wh,

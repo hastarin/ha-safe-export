@@ -217,7 +217,7 @@
     <header>
       <h1>Overnight power predictor</h1>
       <div class="subtitle">
-        Three-zone linear model &middot; Absence periods excluded &middot;
+        Four-zone model &middot; Absence periods excluded &middot;
         <span class="zone-badge" id="zone-label">Heating zone</span>
       </div>
     </header>
@@ -296,21 +296,19 @@
   <script>
     const BATTERY_KWH = 13.8;
 
-    // Heating zone (temp < 19°C): consumption = b0 + b1*temp + b2*solcast_kwh
-    const H = { b0: 19.7258, b1: -0.7756, b2: -0.070291, R2: 0.77, n: 676 };
-    // Heating fallback (no Solcast): consumption = b0 + b1*temp
-    const H_FALLBACK = { b0: 18.8039, b1: -0.8614, R2: 0.71 };
-    // P95 buffer scaled by confidence
+    // Heating zone (temp < 17°C): consumption = b0 + b1*temp + b2*solcast_kwh
+    const H = { b0: 19.7258, b1: -0.7756, b2: -0.070291, R2: 0.77, n: 287 };
     const H_P95 = 3.562;
+
+    // Warm boundary zone (17–19°C): empirical percentile table
+    const WARM = { p50: 4.76, p75: 6.00, p90: 6.99, p95: 8.05, n: 114 };
+
+    // Mild zone (19–21°C): empirical percentile table
+    const MILD = { p50: 4.601, p75: 6.583, p90: 7.829, p95: 8.425, n: 78 };
 
     // Cooling zone (temp > 21°C): consumption = b0 + b1*temp + b2*humidity_pct
     const C = { b0: -13.4046, b1: 0.7231, b2: 0.059498, R2: 0.37, n: 49 };
-    // Cooling fallback (no humidity)
-    const C_FALLBACK = { b0: -6.756, b1: 0.660 };
     const C_P95 = 3.136;
-
-    // Mild zone (19–21°C): empirical percentile table
-    const MILD = { p50: 4.601, p75: 6.583, p90: 7.829, p95: 8.425, n: 59 };
 
     const CONF_LEVELS = [
       { label: "P50 — median",           key: "p50", scale: 0.31 },
@@ -320,7 +318,8 @@
     ];
 
     function getZone(temp) {
-      if (temp < 19) return "heating";
+      if (temp < 17)  return "heating";
+      if (temp < 19)  return "warm_boundary";
       if (temp <= 21) return "mild";
       return "cooling";
     }
@@ -342,7 +341,12 @@
       document.getElementById("conf-display").textContent     = conf.label;
 
       const zone = getZone(temp);
-      const zoneLabels = { heating: "Heating zone", mild: "Mild zone", cooling: "Cooling zone" };
+      const zoneLabels = {
+        heating:       "Heating zone",
+        warm_boundary: "Warm boundary zone",
+        mild:          "Mild zone",
+        cooling:       "Cooling zone",
+      };
       document.getElementById("zone-label").textContent = zoneLabels[zone];
 
       // Show/hide relevant inputs
@@ -353,25 +357,34 @@
 
       let consumption, buffer, confNote, modelDetail, variant;
 
-      if (zone === "mild") {
+      if (zone === "warm_boundary") {
+        consumption = WARM[conf.key];
+        buffer = 0;
+        confNote = `${conf.label} of ${WARM.n} warm-boundary nights`;
+        variant = "warm_boundary_empirical";
+        modelDetail = `Warm boundary (17–19°C): no weather signal predicts consumption in this band — ` +
+          `variance is driven by human behaviour (whether heating ran). ` +
+          `Using empirical percentile table from ${WARM.n} nights. ` +
+          `P50=${WARM.p50} P75=${WARM.p75} P90=${WARM.p90} P95=${WARM.p95} kWh.`;
+
+      } else if (zone === "mild") {
         consumption = MILD[conf.key];
         buffer = 0;
         confNote = `${conf.label} of ${MILD.n} mild nights`;
         variant = "mild_empirical";
-        modelDetail = `Mild zone (19–21°C): temperature has no predictive signal (R²≈0) — HVAC isn't running. ` +
+        modelDetail = `Mild zone (19–21°C): temperature has no predictive signal (R²≈0). ` +
           `Using empirical percentile table from ${MILD.n} nights. ` +
           `P50=${MILD.p50} P75=${MILD.p75} P90=${MILD.p90} P95=${MILD.p95} kWh.`;
 
       } else if (zone === "heating") {
-        const solcast_kwh = solcast;
-        const base = H.b0 + H.b1 * temp + H.b2 * solcast_kwh;
+        const base = H.b0 + H.b1 * temp + H.b2 * solcast;
         buffer = H_P95 * conf.scale;
         consumption = Math.max(1, base);
         confNote = confIdx === 0
           ? "median estimate (no buffer)"
           : `+${buffer.toFixed(2)} kWh ${conf.label} buffer (${(conf.scale * 100).toFixed(0)}% of P95)`;
         variant = "heating_with_solcast";
-        modelDetail = `Heating zone (<19°C): consumption = ${H.b0} + (${H.b1}×temp) + (${H.b2}×solcast_kWh). ` +
+        modelDetail = `Heating zone (<17°C): consumption = ${H.b0} + (${H.b1}×temp) + (${H.b2}×solcast_kWh). ` +
           `R²=${H.R2} · n=${H.n} · P95 buffer=${H_P95} kWh.`;
 
       } else { // cooling

@@ -132,6 +132,7 @@ CREATE TABLE daily_observations (
     solcast_forecast_tomorrow_wh INTEGER,   -- Wh, state at 17:00 prior day * 1000; NULL before Oct 2024
     median_indoor_temp REAL,                -- °C, AVG(mean) over 6pm–11am window; NULL before Jan 2024
     bom_temp_max REAL,                      -- °C, MAX(max) over 6pm–11am window
+    bom_temp_afternoon_max REAL,            -- °C, MAX(max) over 12:00–18:00 prior day
     bom_humidity_mean REAL,                 -- %, AVG(mean) over 6pm–11am window
     bom_humidity_max REAL,                  -- %, MAX(max) over 6pm–11am window
     median_indoor_humidity REAL,            -- %, AVG(mean) over 6pm–11am window; NULL before Jan 2024
@@ -176,6 +177,7 @@ CREATE TABLE extraction_meta (
 | `bom_temp_min`                 | `MIN(weather_temp.min)` over the window                                                                                                                |
 | `bom_temp_mean`                | `AVG(weather_temp.mean)` over the window                                                                                                               |
 | `bom_temp_max`                 | `MAX(weather_temp.max)` over the window                                                                                                                |
+| `bom_temp_afternoon_max`       | `MAX(weather_temp.max)` over **12:00–18:00 prior day** (afternoon peak before the 6pm decision)                                                        |
 | `bom_feels_like_min`           | `MIN(weather_feels_like.min)` over the window                                                                                                          |
 | `bom_rain_max`                 | `MAX(CAST(weather_rain.state AS REAL))` over the window                                                                                                |
 | `bom_wind_mean`                | `AVG(weather_wind.mean)` over the window                                                                                                               |
@@ -282,6 +284,7 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `bom_temp_min`                 | 15.3                                         |
 | `bom_temp_mean`                | 17.2                                         |
 | `bom_temp_max`                 | 22.1                                         |
+| `bom_temp_afternoon_max`       | 23.5                                         |
 | `bom_feels_like_min`           | 14.1                                         |
 | `bom_rain_max`                 | 0.0                                          |
 | `bom_wind_mean`                | 10.3                                         |
@@ -313,6 +316,7 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `bom_temp_min`                 | 15.8     |
 | `bom_temp_mean`                | 17.0     |
 | `bom_temp_max`                 | 18.6     |
+| `bom_temp_afternoon_max`       | 19.4     |
 | `bom_feels_like_min`           | 15.0     |
 | `bom_rain_max`                 | 0.4      |
 | `bom_wind_mean`                | 8.2      |
@@ -344,6 +348,7 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `bom_temp_min`                 | 9.2                             |
 | `bom_temp_mean`                | 10.7                            |
 | `bom_temp_max`                 | 12.8                            |
+| `bom_temp_afternoon_max`       | 15.0                            |
 | `bom_feels_like_min`           | 5.4                             |
 | `bom_rain_max`                 | 0.0                             |
 | `bom_wind_mean`                | 17.4                            |
