@@ -57,6 +57,9 @@ dmypy.json
 .env
 .env.local
 
+# Generated reports
+tools/backtest_report.html
+
 # Claude Code
 .claude/
 .mcp.json

@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `tools/backtest.py` — four-scenario economic backtest covering the last year of observations. Runs the model at P90 (and seasonal Px) against historical inputs, computes monthly export revenue, grid buyback shortfall cost, and opportunity gap vs a perfect hindsight model. Outputs `tools/backtest_report.html` (gitignored; regenerate with `.venv/Scripts/python -m tools.backtest`).
+- `DECISIONS.md` — backtest findings and winter deployment decision: model is not worth deploying June–August until a winter-specific fix or GloBird overnight charging is in place. Sep–May is solidly positive (~$102 net over 9 months in the full-charge scenario).
+
 ## [1.4.0] — 2026-05-11
 
 ### Added

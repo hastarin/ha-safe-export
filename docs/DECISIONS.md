@@ -363,6 +363,43 @@ The Solcast coefficient in the consumption regression (−0.070291 kWh per kWh S
 
 ---
 
+### Backtest results: model is viable from September, not worth deploying in winter (Jun–Aug)
+
+**Decision:** Do not deploy safe-export recommendations during June, July, and August until a winter-specific fix is in place. Target deployment from September 2026.
+**Status:** Locked.
+**Date:** 2026-05-11
+
+**Rationale:** A full-year backtest (`tools/backtest.py`, covering 2025-05-11 to 2026-05-08) evaluated four scenarios across 353 nights:
+
+| Scenario                         | Revenue  | Shortfall  | Net         |
+| -------------------------------- | -------- | ---------- | ----------- |
+| A: Actual SoC, fixed P90         | $104.98  | -$133.45   | **-$28.47** |
+| B: Full-charge SoC, fixed P90    | $110.52  | -$41.30    | **+$69.22** |
+| C: Actual SoC, seasonal Px       | see HTML | see HTML   | see HTML    |
+| D: Full-charge SoC, seasonal Px  | see HTML | see HTML   | see HTML    |
+
+Rates used: $0.15/kWh export, $0.28/kWh grid buyback. Absence period (Sep 28–Nov 3 2025) used prior-year same-date proxy.
+
+**Winter (Jun–Aug) is categorically loss-making under all scenarios.** Even with a fully charged battery (scenario B), June–August net is −$33. The P90 buffer is insufficient to contain actual winter consumption variance. The model's consumption prediction for cold nights is correct on average, but the tail events are expensive: under-predicted consumption nights require buying back grid power at $0.28/kWh, which more than cancels any export revenue.
+
+**Spring through autumn (Sep–May) is solidly positive** in all full-charge scenarios: net +$102 in scenario B across 9 months, with summer months reaching 68–70% efficiency.
+
+**The full-charge assumption matters enormously.** Scenario A (actual SoC) net is −$28 for the year; scenario B (GloBird overnight top-up to 100%) is +$69. The ~$97 swing is entirely attributable to winter nights where the battery didn't fully charge during the day and 6pm SoC was too low to support any export. Under the current EA/Amber tariff structure without overnight charging, winter export is even riskier.
+
+**Seasonal confidence (Px) tuning helps at the margins** but does not fix the structural winter problem. The main lever is either: (a) block export entirely in winter, or (b) develop a better winter model.
+
+**What "full charge" means in practice:** `soc_at_6pm + (100 − max_soc_prev_daylight)` — i.e. the battery is assumed to peak at 100% each day. The delta between actual and adjusted SoC is the shortfall GloBird's overnight charge would have filled.
+
+**Next steps before winter deployment:**
+
+1. Collect live operation data through at least one full winter with the four-zone model running (observe-only, no export).
+2. Investigate whether a winter export block (`bom_temp_mean < 15°C` or `available_discharge_wh < predicted_consumption × 1.2`) eliminates shortfalls without sacrificing shoulder-season revenue.
+3. Re-evaluate once GloBird overnight charging is active — the full-charge scenario shows that daily 100% top-up is the biggest single lever.
+
+**Tool:** Full backtest report at `tools/backtest_report.html`. Regenerate with `.venv/Scripts/python -m tools.backtest`.
+
+---
+
 ## Open / deferred decisions
 
 These are explicitly _not_ settled. They are recorded so that an agent asked to make one of these choices recognises it as a real decision requiring discussion, not a default.
