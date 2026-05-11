@@ -400,6 +400,55 @@ Rates used: $0.15/kWh export, $0.28/kWh grid buyback. Absence period (Sep 28–N
 
 ---
 
+### Backtest v2: actual-SoC scenarios dropped; baselines added; net capture metric introduced
+
+**Decision:** The backtest now evaluates only full-charge SoC scenarios (GloBird overnight charging assumed). Naive baselines are included for comparison. The efficiency column is replaced by "net capture" throughout.
+**Status:** Locked.
+**Date:** 2026-05-11
+
+**Rationale and findings from a second round of backtest analysis:**
+
+**Dropped actual-SoC scenarios:** With GloBird overnight charging active from 2026-05-05, the actual-SoC scenarios (old A and C) no longer represent the operating reality. They are removed to reduce noise in the report.
+
+**Baseline scenarios added:** Three naive baselines were added — 3-day rolling average consumption, 7-day rolling average, and seasonal fixed median (dataset medians: Winter 12,163 Wh, Shoulder 6,481 Wh, Summer 5,859 Wh). These were added to test whether the model adds value over a rule-of-thumb approach. Key finding: **the baselines outperformed the model on raw net dollars** on the training data, but for the wrong reason. They export more aggressively, incur substantially more shortfall cost, and only come out ahead because the training data is the same data the model learned from. The model's conservatism (the buffer) is the primary drag, not its consumption estimate.
+
+**Net capture replaces efficiency:** The old "efficiency" metric was `revenue ÷ (revenue + opportunity gap)` — blind to the rate asymmetry ($0.28/kWh buyback vs $0.15/kWh export). A scenario that blew past the consumption estimate every night would score 100% efficiency while losing money on buyback costs. Net capture = `net ÷ perfect_net`, where perfect net is what a hindsight-perfect model would earn (export exactly `max(0, available − actual)`, zero shortfall). This correctly penalises shortfall because the perfect benchmark avoids it. Under this metric, the baselines score ~63–64% (non-winter) while the model at P50 scores 69.7% — confirming the model adds genuine value when conservatism is relaxed.
+
+**Winter excluded from summary:** Winter (Jun–Aug) nets are negative under all scenarios and structurally unchanged by any confidence-level choice. Including winter in the summary totals obscures the meaningful non-winter comparison. The per-scenario monthly tables still show winter for completeness.
+
+**Net capture colour thresholds (non-winter context):** ≥65% green, ≥55% amber, <55% red. These are calibrated to the observed non-winter range (51–70%); they are not meaningful for full-year totals including winter.
+
+**Full scenario listing (non-winter net / net capture):**
+
+| Scenario | Net capture | Net |
+| -------- | ----------- | --- |
+| A: Model P90 | 51.6% | $102 |
+| B: Model seasonal Px (P95/P90/P75) | 58.3% | $115 |
+| H: Model fixed P75 | 64.0% | $127 |
+| F: Model aggressive seasonal Px (P95/P75/P50) | 64.4% | $127 |
+| G: Model fixed P50 | 69.7% | $138 |
+| C: 3-day rolling average | 64.2% | $127 |
+| D: 7-day rolling average | 63.3% | $125 |
+| E: Seasonal fixed median | 63.3% | $125 |
+
+**Caution:** All scenarios are evaluated on training data. The baselines' apparent competitiveness vs the model is flattering; on unseen data they will regress as they have no mechanism for unusual nights (weather events, temperature extremes).
+
+---
+
+### Deployment confidence level: start at P75, evaluate P50 after one season
+
+**Decision:** Deploy at fixed P75 from September 2026. Evaluate moving to P50 after one full shoulder/summer season of live data.
+**Status:** Open (revisit after Sep–Mar 2026/27 season).
+**Date:** 2026-05-11
+
+**Rationale:** The backtest suggests P50 is the best-performing fixed confidence level on net capture (69.7% non-winter). However this is training-data territory. P75 is the more conservative starting point: it nets $127 non-winter at 64% capture, incurs only $19 shortfall, and sits at the same level as the aggressive baselines. It is a defensible first deployment that limits downside on nights where the model is wrong, while still materially outperforming P90 (+$25 net non-winter).
+
+The P50 vs P75 tradeoff in practice: going from P75 to P50 costs an additional $30/year in shortfall risk to gain $11/year in net. Whether that tradeoff is worthwhile depends on how well-calibrated the model proves to be on live data — if actual violations at P75 are rare, P50 becomes more attractive; if they are frequent, staying at P75 or tightening to P90 is the right call.
+
+**Note on intermediate confidence levels (P60, P65, P70):** The model's empirical percentile tables only have entries at P50/P75/P90/P95. Values between these snap to the nearest defined entry (P60 and P70 both produce the same result as P75; P80 snaps to P75). Adding intermediate entries (P60, P65) would require recomputing the percentile tables from the dataset. This is not worth doing until live data confirms the P75 vs P50 choice is the right axis to refine — the training-data backtest cannot tell us that.
+
+---
+
 ## Open / deferred decisions
 
 These are explicitly _not_ settled. They are recorded so that an agent asked to make one of these choices recognises it as a real decision requiring discussion, not a default.

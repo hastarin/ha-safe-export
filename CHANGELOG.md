@@ -5,10 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- `tools/backtest.py` — four-scenario economic backtest covering the last year of observations. Runs the model at P90 (and seasonal Px) against historical inputs, computes monthly export revenue, grid buyback shortfall cost, and opportunity gap vs a perfect hindsight model. Outputs `tools/backtest_report.html` (gitignored; regenerate with `.venv/Scripts/python -m tools.backtest`).
-- `DECISIONS.md` — backtest findings and winter deployment decision: model is not worth deploying June–August until a winter-specific fix or GloBird overnight charging is in place. Sep–May is solidly positive (~$102 net over 9 months in the full-charge scenario).
+- `tools/backtest.py` — reworked from four scenarios to nine. Actual-SoC scenarios dropped (GloBird overnight charging makes full-charge the operating reality). Added naive baselines (3-day rolling average, 7-day rolling average, seasonal fixed dataset medians) to benchmark model value. Added fixed-confidence model variants at P75 and P50. Added seasonal aggressive variant (P95 winter / P75 shoulder / P50 summer).
+- `tools/backtest_report.html` / `tools/backtest_report.json` — backtest now outputs both HTML and JSON. Summary table excludes winter (Jun–Aug) as structurally loss-making across all scenarios. "Efficiency" column replaced with **net capture** = `net ÷ perfect_net`, which accounts for the $0.28/kWh buyback vs $0.15/kWh export rate asymmetry. Net capture colour thresholds calibrated to non-winter range: ≥65% green, ≥55% amber, <55% red.
+- `DECISIONS.md` — two new entries: (1) baseline comparison findings and net capture metric rationale; (2) deployment confidence level decision: start at P75 in September 2026, evaluate P50 after one full shoulder/summer season. Documents why intermediate confidence levels (P60/P65/P70) are not worth adding until live data resolves the P75 vs P50 question (percentile table entries only at P50/P75/P90/P95; values between them snap to the nearest entry).
 
 ## [1.4.0] — 2026-05-11
 

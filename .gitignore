@@ -59,6 +59,7 @@ dmypy.json
 
 # Generated reports
 tools/backtest_report.html
+tools/backtest_report.json
 
 # Claude Code
 .claude/
