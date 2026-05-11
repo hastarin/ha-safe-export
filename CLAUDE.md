@@ -8,9 +8,9 @@ Installation-specific configuration (battery capacity, sensor names, provider hi
 
 ## Current phase
 
-**Phase 2: Modelling.** Phase 1 (data extraction) is complete — `src/extract.py` builds the dataset SQLite DB and all three validation fixtures pass. Phase 2 trains a model that produces the safe-export prediction defined in `docs/SPEC.md`.
+**Phase 2: Modelling — complete.** Phase 1 (data extraction) is complete at schema v1.4.0. Phase 2 is complete — `src/model.py` implements a four-zone predictor with a `predict()` function. Economic backtesting is done (`tools/backtest.py`); deployment is deferred to September 2026.
 
-Phase 3 (Home Assistant integration) comes after Phase 2. The dataset DB is the contract between Phase 1 and Phase 2; the trained model + `predict()` function is the contract between Phase 2 and Phase 3.
+Phase 3 (Home Assistant integration) comes next. The dataset DB is the contract between Phase 1 and Phase 2; the trained model + `predict()` function is the contract between Phase 2 and Phase 3.
 
 ## Read these before writing code
 
@@ -68,6 +68,22 @@ Three known-good validation fixtures (Feb 7 2026, Mar 20 2026, Jul 17 2025) are 
 
 A passing run of `pytest` is the bar for any change to extraction logic.
 
+## Common commands
+
+```bash
+# Run all tests
+.venv/Scripts/python -m pytest
+
+# Incremental extraction (append new days since last run)
+.venv/Scripts/python -m src.extract data/home-assistant_v2.db
+
+# Full rebuild of the dataset DB
+.venv/Scripts/python -m src.extract data/home-assistant_v2.db --rebuild
+
+# Economic backtest (outputs tools/backtest_report.html and tools/backtest_report.json)
+.venv/Scripts/python -m tools.backtest
+```
+
 ## Repository structure
 
 ```text
@@ -80,24 +96,32 @@ ha-safe-export/
 ├── docs/
 │   ├── SPEC.md
 │   ├── DATASET.md
-│   └── DECISIONS.md
+│   ├── DECISIONS.md
+│   └── analysis/
+│       ├── ENERGY_ANALYSIS.md       # zone model rationale and statistical findings
+│       └── PHASE_1_SCHEMA_UPDATE.md # sensor coverage and schema evolution log
 ├── src/
 │   ├── __init__.py      # defines __version__
 │   ├── config.py        # Config dataclass + load_config()
 │   ├── extract.py       # build/refresh the dataset DB
 │   ├── schema.sql       # canonical DDL for the dataset DB
-│   ├── model.py         # three-zone predictor + predict()
+│   ├── model.py         # four-zone predictor + predict()
 │   ├── windows.py       # timezone-aware window math
 │   └── migrations/      # incremental schema updates (applied automatically on startup)
 │       ├── 001_add_weather_forecast.sql   # v1.0.0 → v1.1.0
 │       ├── 002_add_humidity.sql           # v1.1.0 → v1.2.0
-│       └── 003_add_data_gap.sql           # v1.2.0 → v1.3.0
+│       ├── 003_add_data_gap.sql           # v1.2.0 → v1.3.0
+│       └── 004_add_afternoon_temp.sql     # v1.3.0 → v1.4.0
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py      # shared test fixtures (test Config)
 │   ├── fixtures.py      # expected values from DATASET.md
 │   ├── test_extract.py
 │   └── test_model.py
+├── tools/
+│   ├── backtest.py          # economic backtest; outputs backtest_report.html/.json
+│   ├── nodered-flow.json    # Node-RED flow; runs predict() at 6pm, writes to HA helpers
+│   └── predictor.html       # browser-based model explorer (no Python required)
 ├── data/                # gitignored; holds the dataset DB
 ├── CHANGELOG.md         # version history; update after schema or model changes
 └── pyproject.toml
