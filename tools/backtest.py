@@ -33,7 +33,7 @@ BUYBACK_RATE = 0.28   # $/kWh
 ABSENCE_START  = date(2025, 9, 28)
 ABSENCE_END    = date(2025, 11, 3)
 BACKTEST_START = date(2025, 5, 11)
-BACKTEST_END   = date(2026, 5, 8)
+BACKTEST_END   = date(2026, 5, 20)
 
 # Seasonal medians from dataset (consumption_wh, data-gap rows excluded)
 SEASONAL_FIXED_WH = {
@@ -111,7 +111,7 @@ def ensure_month(monthly: dict, ym: str) -> None:
 
 
 def run_model_scenario(
-    rows: dict, cfg, seasonal: bool, confidence_fn=None
+    rows: dict, cfg, seasonal: bool, confidence_fn=None, start: date | None = None
 ) -> dict[str, dict]:
     """Model-based scenario (full-charge SoC, fixed P90 or seasonal Px).
 
@@ -119,7 +119,7 @@ def run_model_scenario(
     overriding the seasonal/fixed logic.
     """
     monthly: dict[str, dict] = {}
-    d = BACKTEST_START
+    d = start or BACKTEST_START
     while d <= BACKTEST_END:
         ds = d.isoformat()
         ym = ds[:7]
@@ -154,15 +154,13 @@ def run_model_scenario(
     return monthly
 
 
-def run_rolling_scenario(rows: dict, window: int) -> dict[str, dict]:
+def run_rolling_scenario(rows: dict, window: int, start: date | None = None) -> dict[str, dict]:
     """Baseline: rolling N-day average consumption as the estimated need."""
     monthly: dict[str, dict] = {}
-    # Sorted list of all valid dates for building the rolling window
-    sorted_dates = sorted(rows.keys())
-    date_set     = set(sorted_dates)
+    date_set = set(rows.keys())
     recent: deque[float] = deque()
 
-    d = BACKTEST_START
+    d = start or BACKTEST_START
     while d <= BACKTEST_END:
         ds = d.isoformat()
         ym = ds[:7]
@@ -171,7 +169,7 @@ def run_rolling_scenario(rows: dict, window: int) -> dict[str, dict]:
         # Rebuild rolling window: last `window` valid non-gap days before d
         recent.clear()
         check = d - timedelta(days=1)
-        while len(recent) < window and check >= BACKTEST_START - timedelta(days=window * 2):
+        while len(recent) < window and check >= (start or BACKTEST_START) - timedelta(days=window * 2):
             cs = check.isoformat()
             if cs in date_set:
                 recent.appendleft(rows[cs]["consumption_wh"])
@@ -198,10 +196,71 @@ def run_rolling_scenario(rows: dict, window: int) -> dict[str, dict]:
     return monthly
 
 
-def run_seasonal_fixed_scenario(rows: dict) -> dict[str, dict]:
+def run_blended_scenario(
+    rows: dict, cfg, alpha: float, scale_buffer: bool, confidence: float = 0.90,
+    start: date | None = None,
+) -> dict[str, dict]:
+    """Blended scenario: consumption = alpha * model + (1-alpha) * 3-day rolling average.
+
+    alpha=1.0 is pure model, alpha=0.0 is pure 3-day average.
+    If scale_buffer is True the uncertainty buffer is multiplied by alpha (shrinks toward
+    zero as the rolling average dominates). If False the full model buffer is kept.
+    """
+    monthly: dict[str, dict] = {}
+    date_set = set(rows.keys())
+
+    d = start or BACKTEST_START
+    while d <= BACKTEST_END:
+        ds = d.isoformat()
+        ym = ds[:7]
+        ensure_month(monthly, ym)
+
+        # Build 3-day rolling window of actual consumption before d
+        recent: list[float] = []
+        check = d - timedelta(days=1)
+        while len(recent) < 3 and check >= (start or BACKTEST_START) - timedelta(days=6):
+            cs = check.isoformat()
+            if cs in date_set:
+                recent.append(rows[cs]["consumption_wh"])
+            check -= timedelta(days=1)
+
+        in_absence  = ABSENCE_START <= d <= ABSENCE_END
+        lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
+        row = rows.get(lookup_date)
+        if row is None or len(recent) == 0:
+            monthly[ym]["skipped"] += 1
+            d += timedelta(days=1)
+            continue
+
+        inp = PredictInputs(
+            soc_at_6pm=adjusted_soc(row),
+            bom_temp_mean=row["bom_temp_mean"],
+            bom_humidity_mean=row["bom_humidity_mean"],
+            solcast_forecast_tomorrow_wh=row["solcast_forecast_tomorrow_wh"],
+            confidence=confidence,
+        )
+        result = predict(inp, cfg)
+
+        rolling_avg_wh = sum(recent) / len(recent)
+        model_point_wh = result.predicted_consumption_kwh * 1000.0
+        blended_point_wh = alpha * model_point_wh + (1.0 - alpha) * rolling_avg_wh
+
+        buffer_wh = result.error_buffer_kwh * 1000.0
+        if scale_buffer:
+            buffer_wh *= alpha
+
+        total_needed_wh = blended_point_wh + buffer_wh
+        export_wh = max(0.0, result.available_discharge_wh - total_needed_wh)
+
+        accum_night(monthly, ym, result.available_discharge_wh, export_wh, row["consumption_wh"])
+        d += timedelta(days=1)
+    return monthly
+
+
+def run_seasonal_fixed_scenario(rows: dict, start: date | None = None) -> dict[str, dict]:
     """Baseline: seasonal fixed median consumption as the estimated need."""
     monthly: dict[str, dict] = {}
-    d = BACKTEST_START
+    d = start or BACKTEST_START
     while d <= BACKTEST_END:
         ds = d.isoformat()
         ym = ds[:7]
@@ -236,6 +295,12 @@ SCENARIOS = [
     ("C", "Baseline — 3-day rolling average"),
     ("D", "Baseline — 7-day rolling average"),
     ("E", "Baseline — seasonal fixed median"),
+    ("I1", "Blended α=0.75 — 75% model + 25% 3-day avg, buffer fixed"),
+    ("I2", "Blended α=0.75 — 75% model + 25% 3-day avg, buffer scaled"),
+    ("I3", "Blended α=0.50 — 50% model + 50% 3-day avg, buffer fixed"),
+    ("I4", "Blended α=0.50 — 50% model + 50% 3-day avg, buffer scaled"),
+    ("I5", "Blended α=0.25 — 25% model + 75% 3-day avg, buffer fixed"),
+    ("I6", "Blended α=0.25 — 25% model + 75% 3-day avg, buffer scaled"),
 ]
 
 MONTH_NAMES = {
@@ -263,7 +328,43 @@ SEASONAL_FIXED_LABEL = {
 }
 
 
-def build_html(results: dict) -> str:
+def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
+    """Return HTML rows for a recent-window summary table (all scenarios, single aggregated row each)."""
+    rows_html = []
+
+    def eff_class(val: float) -> str:
+        if val >= 65: return "eff-high"
+        if val >= 55: return "eff-mid"
+        return "eff-low"
+
+    def cell_class(val: float) -> str:
+        if val > 0.5:  return "pos"
+        if val < -0.5: return "neg"
+        return ""
+
+    for key, desc in SCENARIOS:
+        m_data = results[key]
+        tot_rev   = sum(m["revenue"]     for m in m_data.values())
+        tot_short = sum(m["shortfall"]   for m in m_data.values())
+        tot_perf  = sum(m["perfect_net"] for m in m_data.values())
+        tot_nights = sum(m["nights"]     for m in m_data.values())
+        net = tot_rev - tot_short
+        cap = net / tot_perf * 100 if tot_perf > 0 else 0.0
+        is_model = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
+        badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
+        warn = f' <span class="skipped">(n={tot_nights})</span>' if tot_nights <= nights_warn else f' <span style="color:#555;font-size:0.8rem">(n={tot_nights})</span>'
+        rows_html.append(f"""
+          <tr>
+            <td>{badge} <strong>{key}</strong> &mdash; {desc}</td>
+            <td class="num">${tot_rev:.2f}</td>
+            <td class="num neg2">-${tot_short:.2f}</td>
+            <td class="num {cell_class(net)}"><strong>${net:.2f}</strong></td>
+            <td class="num {eff_class(cap)}">{cap:.1f}%{warn}</td>
+          </tr>""")
+    return "".join(rows_html)
+
+
+def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
     months = sorted(next(iter(results.values())).keys())
 
     def cell_class(val: float) -> str:
@@ -279,7 +380,7 @@ def build_html(results: dict) -> str:
     scenario_tables = []
     for key, label in SCENARIOS:
         m_data   = results[key]
-        is_model = key in ("A", "B", "F", "G", "H", "I")
+        is_model = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
         rows_html = []
         tot = dict(revenue=0.0, shortfall=0.0, opportunity=0.0, perfect_net=0.0, nights=0)
 
@@ -347,7 +448,7 @@ def build_html(results: dict) -> str:
     summary_rows = []
     for key, label in SCENARIOS:
         m_data          = results[key]
-        is_model        = key in ("A", "B", "F", "G")
+        is_model        = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
         non_winter      = {ym: m for ym, m in m_data.items() if ym[5:7] not in ("06", "07", "08")}
         tot_rev         = sum(m["revenue"]     for m in non_winter.values())
         tot_short       = sum(m["shortfall"]   for m in non_winter.values())
@@ -404,8 +505,28 @@ def build_html(results: dict) -> str:
 <p class="subtitle">{BACKTEST_START} to {BACKTEST_END} &nbsp;|&nbsp; {len(months)} months &nbsp;|&nbsp; Absence period uses prior-year proxy &nbsp;|&nbsp; All scenarios: full-charge SoC</p>
 <p class="rates">Export rate: <strong>$0.15/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>$0.28/kWh</strong></p>
 
+<div class="summary-section recent-section">
+  <h2>Recent performance &mdash; last 14 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(small sample &mdash; treat as directional only)</span></h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Net capture (n)</th></tr>
+    </thead>
+    <tbody>{_recent_summary_rows(recent_14, "14-day", nights_warn=14)}</tbody>
+  </table>
+</div>
+
+<div class="summary-section recent-section">
+  <h2>Recent performance &mdash; last 30 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(moderately noisy)</span></h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Net capture (n)</th></tr>
+    </thead>
+    <tbody>{_recent_summary_rows(recent_30, "30-day", nights_warn=20)}</tbody>
+  </table>
+</div>
+
 <div class="summary-section">
-  <h2>Scenario summary <span style="font-size:0.8rem;font-weight:normal;color:#777">(winter Jun–Aug excluded — loss-making in all scenarios)</span></h2>
+  <h2>Full-period scenario summary <span style="font-size:0.8rem;font-weight:normal;color:#777">(winter Jun–Aug excluded — loss-making in all scenarios)</span></h2>
   <table>
     <thead>
       <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Net capture</th></tr>
@@ -501,7 +622,59 @@ def main() -> None:
     print("Running scenario G: Model — full-charge SoC, fixed P50...")
     results["G"] = run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50)
 
-    html = build_html(results)
+    print("Running scenario I1: Blended a=0.75, buffer fixed...")
+    results["I1"] = run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False)
+    print("Running scenario I2: Blended a=0.75, buffer scaled...")
+    results["I2"] = run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True)
+    print("Running scenario I3: Blended a=0.50, buffer fixed...")
+    results["I3"] = run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False)
+    print("Running scenario I4: Blended a=0.50, buffer scaled...")
+    results["I4"] = run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=True)
+    print("Running scenario I5: Blended a=0.25, buffer fixed...")
+    results["I5"] = run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=False)
+    print("Running scenario I6: Blended a=0.25, buffer scaled...")
+    results["I6"] = run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=True)
+
+    start_14 = BACKTEST_END - timedelta(days=13)
+    start_30 = BACKTEST_END - timedelta(days=29)
+
+    print("Running recent 14-day windows...")
+    recent_14 = {
+        "A":  run_model_scenario(rows, cfg, seasonal=False, start=start_14),
+        "B":  run_model_scenario(rows, cfg, seasonal=True, start=start_14),
+        "H":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.75, start=start_14),
+        "F":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_14),
+        "G":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50, start=start_14),
+        "C":  run_rolling_scenario(rows, window=3, start=start_14),
+        "D":  run_rolling_scenario(rows, window=7, start=start_14),
+        "E":  run_seasonal_fixed_scenario(rows, start=start_14),
+        "I1": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False, start=start_14),
+        "I2": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True, start=start_14),
+        "I3": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False, start=start_14),
+        "I4": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=True, start=start_14),
+        "I5": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=False, start=start_14),
+        "I6": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=True, start=start_14),
+    }
+
+    print("Running recent 30-day windows...")
+    recent_30 = {
+        "A":  run_model_scenario(rows, cfg, seasonal=False, start=start_30),
+        "B":  run_model_scenario(rows, cfg, seasonal=True, start=start_30),
+        "H":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.75, start=start_30),
+        "F":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_30),
+        "G":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50, start=start_30),
+        "C":  run_rolling_scenario(rows, window=3, start=start_30),
+        "D":  run_rolling_scenario(rows, window=7, start=start_30),
+        "E":  run_seasonal_fixed_scenario(rows, start=start_30),
+        "I1": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False, start=start_30),
+        "I2": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True, start=start_30),
+        "I3": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False, start=start_30),
+        "I4": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=True, start=start_30),
+        "I5": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=False, start=start_30),
+        "I6": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=True, start=start_30),
+    }
+
+    html = build_html(results, recent_14, recent_30)
     html_path = Path("tools/backtest_report.html")
     html_path.write_text(html, encoding="utf-8")
     print(f"Report written to {html_path}")
