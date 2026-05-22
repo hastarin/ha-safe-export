@@ -40,6 +40,9 @@ SOFT_FLOOR_FRAC   = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN  # 0.20
 
 ABSENCE_START  = date(2025, 9, 28)
 ABSENCE_END    = date(2025, 11, 3)
+# Defaults; main() overrides these to a rolling 12 months anchored to the dataset's
+# last date (BACKTEST_END = last available date, BACKTEST_START = one year prior), so
+# the window doesn't creep as more days are extracted.
 BACKTEST_START = date(2025, 5, 11)
 BACKTEST_END   = date(2026, 5, 20)
 
@@ -70,6 +73,24 @@ def seasonal_confidence_aggressive(d: date) -> float:
     if s == "winter":   return 0.95   # unchanged — winter is loss-making regardless
     if s == "summer":   return 0.50
     return 0.75
+
+
+def last_dataset_date(db_path: str) -> date:
+    """Latest date present in daily_observations (the dataset's last available day)."""
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    row = conn.execute("SELECT MAX(date) FROM daily_observations").fetchone()
+    conn.close()
+    if not row or not row[0]:
+        raise SystemExit("dataset is empty — run extraction first")
+    return date.fromisoformat(row[0])
+
+
+def one_year_before(d: date) -> date:
+    """Same calendar date one year earlier (29 Feb → 28 Feb)."""
+    try:
+        return d.replace(year=d.year - 1)
+    except ValueError:
+        return d.replace(year=d.year - 1, day=28)
 
 
 def load_rows(db_path: str) -> dict[str, dict]:
@@ -380,19 +401,30 @@ SEASONAL_FIXED_LABEL = {
 }
 
 
+def _capture(net: float, perfect_net: float) -> tuple[str, str, float]:
+    """Net-capture cell as (display_text, css_class, sort_value).
+
+    Returns '—' (undefined) when there was no opportunity to capture
+    (perfect_net ≈ 0) — the ratio net/perfect_net is meaningless there, so
+    showing 0% would wrongly imply the strategy missed something. Such rows
+    sort to the bottom.
+    """
+    if perfect_net <= 1e-9:
+        return ("—", "", float("-inf"))
+    cap = net / perfect_net * 100.0
+    cls = "eff-high" if cap >= 65 else "eff-mid" if cap >= 55 else "eff-low"
+    return (f"{cap:.1f}%", cls, cap)
+
+
+def _cell_class(val: float) -> str:
+    if val > 0.5:  return "pos"
+    if val < -0.5: return "neg"
+    return ""
+
+
 def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
     """Return HTML rows for a recent-window summary table (all scenarios, single aggregated row each)."""
     rows_html = []
-
-    def eff_class(val: float) -> str:
-        if val >= 65: return "eff-high"
-        if val >= 55: return "eff-mid"
-        return "eff-low"
-
-    def cell_class(val: float) -> str:
-        if val > 0.5:  return "pos"
-        if val < -0.5: return "neg"
-        return ""
 
     computed = []
     for key, desc in SCENARIOS:
@@ -402,12 +434,12 @@ def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
         tot_perf  = sum(m["perfect_net"] for m in m_data.values())
         tot_nights = sum(m["nights"]     for m in m_data.values())
         net = tot_rev - tot_short
-        cap = net / tot_perf * 100 if tot_perf > 0 else 0.0
-        computed.append((cap, key, desc, tot_rev, tot_short, net, tot_nights))
+        cap_text, cap_cls, cap_sort = _capture(net, tot_perf)
+        computed.append((cap_sort, cap_text, cap_cls, key, desc, tot_rev, tot_short, tot_perf, net, tot_nights))
 
     computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
 
-    for cap, key, desc, tot_rev, tot_short, net, tot_nights in computed:
+    for cap_sort, cap_text, cap_cls, key, desc, tot_rev, tot_short, tot_perf, net, tot_nights in computed:
         is_model = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
         badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
         warn = f' <span class="skipped">(n={tot_nights})</span>' if tot_nights <= nights_warn else f' <span style="color:#555;font-size:0.8rem">(n={tot_nights})</span>'
@@ -416,24 +448,25 @@ def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
             <td>{badge} <strong>{key}</strong> &mdash; {desc}</td>
             <td class="num">${tot_rev:.2f}</td>
             <td class="num neg2">-${tot_short:.2f}</td>
-            <td class="num {cell_class(net)}"><strong>${net:.2f}</strong></td>
-            <td class="num {eff_class(cap)}">{cap:.1f}%{warn}</td>
+            <td class="num {_cell_class(net)}"><strong>${net:.2f}</strong></td>
+            <td class="num">${tot_perf:.2f}</td>
+            <td class="num {cap_cls}">{cap_text}{warn}</td>
           </tr>""")
     return "".join(rows_html)
 
 
 def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
     months = sorted(next(iter(results.values())).keys())
+    cell_class = _cell_class
 
-    def cell_class(val: float) -> str:
-        if val > 0.5:  return "pos"
-        if val < -0.5: return "neg"
-        return ""
-
-    def eff_class(val: float) -> str:
-        if val >= 65: return "eff-high"
-        if val >= 55: return "eff-mid"
-        return "eff-low"
+    # Span of the (rolling) window in whole months, and how many days were served by
+    # the prior-year absence proxy (window ∩ absence period). When the latter hits 0
+    # the rolling window has moved past the absence period and the proxy handling can
+    # be retired.
+    months_span = (BACKTEST_END.year - BACKTEST_START.year) * 12 + (BACKTEST_END.month - BACKTEST_START.month)
+    ov_start = max(BACKTEST_START, ABSENCE_START)
+    ov_end   = min(BACKTEST_END, ABSENCE_END)
+    proxied_days = (ov_end - ov_start).days + 1 if ov_start <= ov_end else 0
 
     scenario_tables = []
     for key, label in SCENARIOS:
@@ -446,7 +479,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
             m   = m_data[ym]
             mon = ym[5:7]
             net         = m["revenue"] - m["shortfall"]
-            net_capture = net / m["perfect_net"] * 100 if m["perfect_net"] > 0 else 0.0
+            cap_text, cap_cls, _ = _capture(net, m["perfect_net"])
 
             season_tag = ""
             if key == "B":
@@ -468,13 +501,14 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
                 <td class="num">${m['revenue']:.2f}</td>
                 <td class="num neg2">-${m['shortfall']:.2f}</td>
                 <td class="num {cell_class(net)}">${net:.2f}</td>
-                <td class="num {eff_class(net_capture)}">{net_capture:.1f}%</td>
+                <td class="num">${m['perfect_net']:.2f}</td>
+                <td class="num {cap_cls}">{cap_text}</td>
               </tr>""")
             for k in ("revenue", "shortfall", "opportunity", "perfect_net", "nights"):
                 tot[k] += m[k]
 
-        tot_net         = tot["revenue"] - tot["shortfall"]
-        tot_net_capture = tot_net / tot["perfect_net"] * 100 if tot["perfect_net"] > 0 else 0.0
+        tot_net = tot["revenue"] - tot["shortfall"]
+        tot_cap_text, tot_cap_cls, _ = _capture(tot_net, tot["perfect_net"])
         badge   = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
         scenario_tables.append(f"""
         <section>
@@ -483,7 +517,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
             <thead>
               <tr>
                 <th>Month</th><th>Nights</th><th>Revenue</th>
-                <th>Shortfall</th><th>Net</th><th>Net capture</th>
+                <th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture</th>
               </tr>
             </thead>
             <tbody>
@@ -496,7 +530,8 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
                 <td class="num"><strong>${tot['revenue']:.2f}</strong></td>
                 <td class="num neg2"><strong>-${tot['shortfall']:.2f}</strong></td>
                 <td class="num {cell_class(tot_net)}"><strong>${tot_net:.2f}</strong></td>
-                <td class="num {eff_class(tot_net_capture)}"><strong>{tot_net_capture:.1f}%</strong></td>
+                <td class="num"><strong>${tot['perfect_net']:.2f}</strong></td>
+                <td class="num {tot_cap_cls}"><strong>{tot_cap_text}</strong></td>
               </tr>
             </tfoot>
           </table>
@@ -513,13 +548,14 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
         tot_short       = sum(m["shortfall"]   for m in non_winter.values())
         tot_perfect_net = sum(m["perfect_net"] for m in non_winter.values())
         tot_net         = tot_rev - tot_short
-        tot_net_capture = tot_net / tot_perfect_net * 100 if tot_perfect_net > 0 else 0.0
-        summary_computed.append((tot_net_capture, key, label, is_model, tot_rev, tot_short, tot_net))
+        cap_text, cap_cls, cap_sort = _capture(tot_net, tot_perfect_net)
+        summary_computed.append((cap_sort, cap_text, cap_cls, key, label, is_model,
+                                 tot_rev, tot_short, tot_perfect_net, tot_net))
 
     summary_computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
 
     summary_rows = []
-    for tot_net_capture, key, label, is_model, tot_rev, tot_short, tot_net in summary_computed:
+    for cap_sort, cap_text, cap_cls, key, label, is_model, tot_rev, tot_short, tot_perfect_net, tot_net in summary_computed:
         badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
         summary_rows.append(f"""
           <tr>
@@ -527,7 +563,8 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
             <td class="num">${tot_rev:.2f}</td>
             <td class="num neg2">-${tot_short:.2f}</td>
             <td class="num {cell_class(tot_net)}"><strong>${tot_net:.2f}</strong></td>
-            <td class="num {eff_class(tot_net_capture)}">{tot_net_capture:.1f}%</td>
+            <td class="num">${tot_perfect_net:.2f}</td>
+            <td class="num {cap_cls}">{cap_text}</td>
           </tr>""")
 
     return f"""<!DOCTYPE html>
@@ -567,14 +604,14 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
 </head>
 <body>
 <h1>Safe Export Backtest</h1>
-<p class="subtitle">{BACKTEST_START} to {BACKTEST_END} &nbsp;|&nbsp; {len(months)} months &nbsp;|&nbsp; Absence period uses prior-year proxy &nbsp;|&nbsp; All scenarios: full-charge SoC</p>
+<p class="subtitle">{BACKTEST_START} to {BACKTEST_END} &nbsp;|&nbsp; {months_span} months &nbsp;|&nbsp; Absence period: {proxied_days} days proxied (prior-year) &nbsp;|&nbsp; All scenarios: full-charge SoC</p>
 <p class="rates">Export rate: <strong>$0.15/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>$0.28/kWh</strong></p>
 
 <div class="summary-section recent-section">
   <h2>Recent performance &mdash; last 14 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(small sample &mdash; treat as directional only)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Net capture (n)</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture (n)</th></tr>
     </thead>
     <tbody>{_recent_summary_rows(recent_14, "14-day", nights_warn=14)}</tbody>
   </table>
@@ -584,17 +621,17 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
   <h2>Recent performance &mdash; last 30 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(moderately noisy)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Net capture (n)</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture (n)</th></tr>
     </thead>
     <tbody>{_recent_summary_rows(recent_30, "30-day", nights_warn=20)}</tbody>
   </table>
 </div>
 
 <div class="summary-section">
-  <h2>Full-period scenario summary <span style="font-size:0.8rem;font-weight:normal;color:#777">(winter Jun–Aug excluded — loss-making in all scenarios)</span></h2>
+  <h2>Non-winter scenario summary <span style="font-size:0.8rem;font-weight:normal;color:#777">(Sep–May; winter Jun–Aug excluded — the model correctly idles in winter (≈zero export, zero shortfall), so its net capture is noisy/low-signal there, not loss-making. Monthly tables below still show winter.)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Net capture</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture</th></tr>
     </thead>
     <tbody>{''.join(summary_rows)}</tbody>
   </table>
@@ -609,12 +646,10 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
 {''.join(scenario_tables)}
 
 <p class="note">
-  <strong>Net capture</strong> = net &divide; perfect net &mdash; what fraction of the best possible outcome (hindsight-perfect export, zero shortfall) was actually achieved.
-  Unlike a raw efficiency metric, this accounts for the rate asymmetry: shortfall costs $0.28/kWh to cover while missed export only foregoes $0.15/kWh.
-  A scenario that exports aggressively and incurs heavy shortfall will score lower than one that is more conservative, even if its revenue is higher.<br>
-  <strong>Perfect net</strong> = what a hindsight-perfect model would earn: export exactly <code>max(0, available &minus; actual)</code> every night, zero shortfall.<br>
-  <strong>Full-charge SoC</strong> = 6pm SoC adjusted upward by however short of 100% the prior day&rsquo;s peak fell, simulating GloBird overnight charging.<br>
-  <strong>Baseline battery maths</strong>: available = SoC% &times; 13.8 kWh &minus; 10% min SoC; export = max(0, available &minus; estimated consumption).
+  <strong>Metric: SoC trough.</strong> Each night is judged against the actual overnight SoC trough (<code>min_soc_overnight</code>), reconstructed to a no-export baseline by adding back real peak exports (<code>evening_grid_export_wh</code>) and the full-charge adjustment. Exporting <code>E</code> lowers the trough by <code>E&divide;capacity</code>; a shortfall (grid buyback) is charged only for the part that pushes the trough below the <strong>hard floor</strong> (min SoC), and only the extra breach the export causes.<br>
+  <strong>Perfect net</strong> = what a hindsight-perfect model would earn: export down to the <strong>soft floor</strong> (min SoC + 10pt cushion) every night, zero shortfall. &ldquo;&mdash;&rdquo; net capture means there was no opportunity (perfect net &approx; 0), so the ratio is undefined.<br>
+  <strong>Net capture</strong> = net &divide; perfect net &mdash; what fraction of that best-possible outcome was achieved. Accounts for the rate asymmetry: shortfall costs $0.28/kWh to cover while missed export only foregoes $0.15/kWh, so aggressive-but-breaching strategies score lower than their raw revenue suggests.<br>
+  <strong>Full-charge SoC</strong> = 6pm SoC adjusted upward by however short of 100% the prior day&rsquo;s peak fell, simulating GloBird overnight charging. Capacity and floor come from <code>config.yaml</code>.
 </p>
 </body>
 </html>"""
@@ -629,7 +664,8 @@ def build_json(results: dict) -> dict:
         tot_short       = sum(m["shortfall"]   for m in m_data.values())
         tot_perfect_net = sum(m["perfect_net"] for m in m_data.values())
         tot_net         = round(tot_rev - tot_short, 2)
-        tot_net_capture = round(tot_net / tot_perfect_net * 100, 1) if tot_perfect_net > 0 else 0.0
+        # None (not 0) when there was no opportunity to capture — the ratio is undefined.
+        tot_net_capture = round(tot_net / tot_perfect_net * 100, 1) if tot_perfect_net > 1e-9 else None
         monthly = {
             ym: {
                 "nights":      m["nights"],
@@ -639,7 +675,7 @@ def build_json(results: dict) -> dict:
                 "perfect_net": round(m["perfect_net"], 2),
                 "net_capture": round(
                     (m["revenue"] - m["shortfall"]) / m["perfect_net"] * 100, 1
-                ) if m["perfect_net"] > 0 else 0.0,
+                ) if m["perfect_net"] > 1e-9 else None,
             }
             for ym, m in sorted(m_data.items())
         }
@@ -663,10 +699,15 @@ def main() -> None:
 
     # Drive battery capacity + discharge floor from config (not hardcoded), so the
     # backtest's evaluation floor matches what predict() assumes for its decisions.
-    global BATTERY_WH, HARD_FLOOR_FRAC, SOFT_FLOOR_FRAC
+    global BATTERY_WH, HARD_FLOOR_FRAC, SOFT_FLOOR_FRAC, BACKTEST_START, BACKTEST_END
     BATTERY_WH      = cfg.battery_capacity_wh
     HARD_FLOOR_FRAC = cfg.battery_reserve_fraction
     SOFT_FLOOR_FRAC = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN
+
+    # Rolling 12-month window anchored to the dataset's last available date, so the
+    # backtest window stays a consistent 12 months instead of creeping as data grows.
+    BACKTEST_END   = last_dataset_date(DB_PATH)
+    BACKTEST_START = one_year_before(BACKTEST_END)
 
     results = {}
 

@@ -412,8 +412,8 @@ The Solcast coefficient in the consumption regression (−0.070291 kWh per kWh S
 ### Backtest results: model is viable from September, not worth deploying in winter (Jun–Aug)
 
 **Decision:** Do not deploy safe-export recommendations during June, July, and August until a winter-specific fix is in place. Target deployment from September 2026.
-**Status:** Locked.
-**Date:** 2026-05-11
+**Status:** NEEDS REVISIT — Open. The "categorically loss-making" rationale below was an artifact of the old consumption-based metric (it charged the model for the _unavoidable_ winter grid draws). Under the SoC-trough metric (Backtest v3, 2026-05-22) the model is **break-even, not loss-making** in winter: it correctly recommends ≈zero export, so it earns almost nothing **and loses nothing** (zero export-caused shortfall at every confidence). Running the export model in winter is therefore harmless (not profitable). Do NOT re-decide off backtest numbers alone — revisit with live winter data; the winter `perfect_net` also leans on the full-charge assumption, so winter net-capture % is low-signal.
+**Date:** 2026-05-11 (rationale below); revisit flagged 2026-05-22
 
 **Rationale:** A full-year backtest (`tools/backtest.py`, covering 2025-05-11 to 2026-05-08) evaluated four scenarios across 353 nights:
 
