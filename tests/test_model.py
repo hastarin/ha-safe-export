@@ -1,4 +1,4 @@
-"""Tests for src/model.py — three-zone safe-export prediction model."""
+"""Tests for src/model.py — four-zone safe-export prediction model."""
 
 import pytest
 
@@ -169,15 +169,15 @@ def test_fixture_zone(date, expected_zone, test_cfg):
 def test_fixture_jul17_cold_winter_no_export(test_cfg):
     # Jul 17: 58.7% SoC, 10.7°C, Solcast 8789 Wh.
     # Available discharge ~6.7 kWh.
-    # Predicted consumption ~10.8 kWh + buffer ~3.1 kWh = ~13.9 kWh needed.
+    # Predicted consumption ~12.2 kWh + buffer ~2.3 kWh = ~14.5 kWh needed.
     # Still short — safe export remains 0.
     result = predict(_inputs_from_fixture("2025-07-17"), test_cfg)
     assert result.safe_export_wh == 0.0
 
 
 def test_fixture_feb07_full_battery_warm_has_export(test_cfg):
-    # Feb 7: 100% SoC, 17.2°C — warm boundary zone, P90 budget 6.99 kWh.
-    # Available 12.4 kWh − 6.99 kWh = ~5.4 kWh safe export.
+    # Feb 7: 100% SoC, 17.2°C — warm boundary zone, P90 budget 7.78 kWh.
+    # Available 12.4 kWh − 7.78 kWh = ~4.6 kWh safe export.
     result = predict(_inputs_from_fixture("2026-02-07"), test_cfg)
     assert result.safe_export_wh > 3000.0
 
@@ -191,12 +191,14 @@ def test_fixture_consumption_estimate_in_range(test_cfg):
 
 
 def test_solcast_affects_heating_consumption_estimate(test_cfg):
-    # Solcast is used as a cloud-cover proxy in the heating OLS model.
-    # High Solcast (sunny tomorrow) → lower predicted consumption → more export headroom.
+    # Solcast is used as a cloud-cover proxy in the heating OLS model: higher
+    # Solcast (clearer skies) → lower predicted consumption. Assert on the
+    # consumption estimate directly — at cold temps the safe-export proxy can
+    # clamp both cases to zero and mask the (small) Solcast effect.
     base = dict(soc_at_6pm=100.0, bom_temp_mean=12.0)
     cloudy = predict(PredictInputs(**base, solcast_forecast_tomorrow_wh=5000), test_cfg)
     sunny = predict(PredictInputs(**base, solcast_forecast_tomorrow_wh=40000), test_cfg)
-    assert sunny.safe_export_wh > cloudy.safe_export_wh
+    assert sunny.predicted_consumption_kwh < cloudy.predicted_consumption_kwh
 
 
 def test_higher_min_soc_reduces_export(test_cfg):

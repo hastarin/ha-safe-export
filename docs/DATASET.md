@@ -39,10 +39,10 @@ Buckets are labeled by their **start** timestamp. A bucket with `start_ts = 18:0
 - "Value at 11am on a chart" ≈ `mean` of the **10:00 bucket**
 - A window aggregation includes all buckets where `18:00 prior ≤ start_ts ≤ 10:00 row date` (these are the buckets fully contained in `[18:00, 11:00)`)
 
-For cumulative-sum sensors (`sum` column): the value at `start_ts = 18:00` is the cumulative reading immediately at the start of bucket `[18:00, 19:00)`. Therefore window energy is:
+For cumulative-sum sensors (`sum` column): the value stored in bucket `start_ts = T` is the cumulative meter reading at the **end** of that bucket, i.e. at time `T+1h`. To read the cumulative value **at** a boundary hour H, query the bucket labelled `H−1h`. Therefore window energy (18:00 prior → 11:00 row date) is:
 
 ```text
-window_energy = sum_at(start_ts = 11:00 row date) − sum_at(start_ts = 18:00 prior day)
+window_energy = sum_at(start_ts = 10:00 row date) − sum_at(start_ts = 17:00 prior day)
 ```
 
 ## Source sensors
@@ -189,10 +189,10 @@ CREATE TABLE extraction_meta (
 | `median_indoor_humidity`       | `AVG(median_humidity.mean)` over the window. **NULL** before 2024-01-08.                                                                               |
 | `solar_wh_before_11am`         | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean x 1h)                                                                                          |
 | `consumption_wh_load`          | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                                                                            |
-| `grid_import_wh`               | `consumed.sum @ 11:00 − consumed.sum @ 18:00 prior`                                                                                                    |
-| `grid_export_wh`               | `produced.sum @ 11:00 − produced.sum @ 18:00 prior`                                                                                                    |
-| `battery_charged_wh`           | `charged.sum @ 11:00 − charged.sum @ 18:00 prior`                                                                                                      |
-| `battery_discharged_wh`        | `discharged.sum @ 11:00 − discharged.sum @ 18:00 prior`                                                                                                |
+| `grid_import_wh`               | `consumed.sum @ 10:00 row date − consumed.sum @ 17:00 prior` (reads cumulative at 11:00 minus 18:00)                                                   |
+| `grid_export_wh`               | `produced.sum @ 10:00 row date − produced.sum @ 17:00 prior`                                                                                           |
+| `battery_charged_wh`           | `charged.sum @ 10:00 row date − charged.sum @ 17:00 prior`                                                                                             |
+| `battery_discharged_wh`        | `discharged.sum @ 10:00 row date − discharged.sum @ 17:00 prior`                                                                                       |
 | `consumption_wh`               | `solar_wh_before_11am + grid_import_wh + battery_discharged_wh − grid_export_wh − battery_charged_wh`                                                  |
 | `curtailment_likely`           | `1 if max_soc_prev_daylight ≥ 99 else 0`                                                                                                               |
 | `guests`                       | `1 if MAX(guests_sensor.mean over window) > 0.5 else 0`. **NULL** if the guests sensor has no data for the window. Sensor configured in `config.yaml`. |
@@ -294,10 +294,10 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `solar_wh_before_11am`         | 9612                                         |
 | `consumption_wh_load`          | 4949                                         |
 | `grid_import_wh`               | 24                                           |
-| `grid_export_wh`               | 4677                                         |
+| `grid_export_wh`               | 3635                                         |
 | `battery_charged_wh`           | 3600                                         |
-| `battery_discharged_wh`        | 3398                                         |
-| `consumption_wh` (balance)     | 4757                                         |
+| `battery_discharged_wh`        | 3399                                         |
+| `consumption_wh` (balance)     | 5800                                         |
 | `curtailment_likely`           | 1                                            |
 
 ### Mar 20, 2026 (AEDT) — cloudy, deep discharge
@@ -325,11 +325,11 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `median_indoor_temp`           | 22.3     |
 | `solar_wh_before_11am`         | 2779     |
 | `consumption_wh_load`          | 6624     |
-| `grid_import_wh`               | 772      |
+| `grid_import_wh`               | 768      |
 | `grid_export_wh`               | 6        |
-| `battery_charged_wh`           | 3304     |
-| `battery_discharged_wh`        | 4954     |
-| `consumption_wh` (balance)     | 5195     |
+| `battery_charged_wh`           | 1360     |
+| `battery_discharged_wh`        | 5090     |
+| `consumption_wh` (balance)     | 7271     |
 | `curtailment_likely`           | 0        |
 
 ### Jul 17, 2025 (AEST) — winter, depleted, ea period
@@ -357,11 +357,11 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `median_indoor_temp`           | 19.2                            |
 | `solar_wh_before_11am`         | 1007                            |
 | `consumption_wh_load`          | 13040                           |
-| `grid_import_wh`               | 6969                            |
+| `grid_import_wh`               | 6731                            |
 | `grid_export_wh`               | 1                               |
-| `battery_charged_wh`           | 327                             |
-| `battery_discharged_wh`        | 5051                            |
-| `consumption_wh` (balance)     | 12699                           |
+| `battery_charged_wh`           | 0                               |
+| `battery_discharged_wh`        | 5806                            |
+| `consumption_wh` (balance)     | 13543                           |
 | `curtailment_likely`           | 0                               |
 
 These three samples cover both DST regimes (AEST and AEDT), both providers active during validation, full and depleted battery states, sunny and cloudy days, and curtailment / no-curtailment.

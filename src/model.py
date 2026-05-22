@@ -5,10 +5,20 @@ be exported between 6–9pm such that SoC at 11am next day remains above a
 configurable safety threshold with ~90% confidence.
 
 Zones are determined by forecast overnight mean temperature (bom_temp_mean):
-  - Heating       : < 17 °C  — OLS on temp + Solcast (R²=0.77), temp-only fallback (R²=0.71)
+  - Heating       : < 17 °C  — OLS on temp + Solcast (R²=0.83), temp-only fallback (R²=0.82)
   - Warm boundary : 17–19 °C — empirical percentile table (no weather signal in this band)
   - Mild          : 19–21 °C — empirical percentile table (no predictive signal from temp)
-  - Cooling       : > 21 °C  — OLS on temp + humidity (R²=0.37, weak; improves with more data)
+  - Cooling       : > 21 °C  — OLS on temp + humidity (R²=0.52, improves with more data)
+
+NOTE ON THE "MILD" LABEL: 19–21 °C is *not* the consumption sweet spot — that
+minimum actually sits in the warm-boundary band (17–19 °C, ~6.0 kWh). The 1 °C
+consumption profile shows 19–21 °C is already on the cooling upslope (~6.8 kWh),
+so the mild table consistently sits *above* the warm-boundary table. This is
+correct, not a bug: "mild" is a retained misnomer for what is really a
+low-cooling shoulder. Bands were reviewed against the profile on 2026-05-22 and
+kept at 17/19/21; renaming was rejected as cosmetic churn across three model
+implementations (this file, tools/predictor.html, tools/nodered-flow.json).
+See DECISIONS.md "Zone bands retained at 17/19/21 after retraining".
 
 Coefficients and percentile tables are loaded from config.yaml.
 Held-out test MAE = 1.75 kWh (heating zone); violation rate 2.4% on stratified test set.
@@ -121,6 +131,8 @@ def _predict_consumption(
         return m.warm_boundary_p50, 0.0, "warm_boundary_empirical", "warm_boundary"
 
     elif temp <= 21.0:
+        # "mild" is a misnomer — this band is the low-cooling shoulder, not the
+        # sweet spot (which is the warm-boundary band below). See module docstring.
         return m.mild_p50, 0.0, "mild_empirical", "mild"
 
     else:  # cooling
@@ -171,7 +183,9 @@ def predict(inputs: PredictInputs, cfg: Config) -> PredictResult:
         buffer_kwh = 0.0
     else:
         consumption_estimate_kwh = point_kwh
-        confidence_scale = {0.50: 0.31, 0.75: 0.58, 0.90: 0.87, 0.95: 1.00}
+        # Ratios of P50/P75/P90 to P95 of heating-zone |residual| (recomputed
+        # 2026-05-22 from the post-fix dataset; drift from prior was negligible).
+        confidence_scale = {0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}
         scale = min(confidence_scale.items(), key=lambda kv: abs(kv[0] - inputs.confidence))[1]
         buffer_kwh = p95_buffer_kwh * scale
 

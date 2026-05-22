@@ -296,24 +296,27 @@
   <script>
     const BATTERY_KWH = 13.8;
 
+    // Coefficients refit 2026-05-22 (tools/retrain.py) — keep in sync with config.yaml.
     // Heating zone (temp < 17°C): consumption = b0 + b1*temp + b2*solcast_kwh
-    const H = { b0: 19.7258, b1: -0.7756, b2: -0.070291, R2: 0.77, n: 287 };
-    const H_P95 = 3.562;
+    const H = { b0: 22.5759, b1: -0.9593, b2: -0.016243, R2: 0.83, n: 352 };
+    const H_P95 = 2.649;
 
     // Warm boundary zone (17–19°C): empirical percentile table
-    const WARM = { p50: 4.76, p75: 6.00, p90: 6.99, p95: 8.05, n: 114 };
+    const WARM = { p50: 5.979, p75: 6.808, p90: 7.783, p95: 8.783, n: 114 };
 
-    // Mild zone (19–21°C): empirical percentile table
-    const MILD = { p50: 4.601, p75: 6.583, p90: 7.829, p95: 8.425, n: 78 };
+    // Mild zone (19–21°C): empirical percentile table.
+    // NOTE: "mild" is a misnomer — this band sits above warm boundary (it's the
+    // low-cooling shoulder, not the sweet spot). See DECISIONS.md.
+    const MILD = { p50: 6.796, p75: 7.840, p90: 8.514, p95: 9.002, n: 78 };
 
     // Cooling zone (temp > 21°C): consumption = b0 + b1*temp + b2*humidity_pct
-    const C = { b0: -13.4046, b1: 0.7231, b2: 0.059498, R2: 0.37, n: 49 };
-    const C_P95 = 3.136;
+    const C = { b0: -9.6822, b1: 0.7163, b2: 0.028676, R2: 0.52, n: 64 };
+    const C_P95 = 2.431;
 
     const CONF_LEVELS = [
-      { label: "P50 — median",           key: "p50", scale: 0.31 },
+      { label: "P50 — median",           key: "p50", scale: 0.33 },
       { label: "P75 — cautious",          key: "p75", scale: 0.58 },
-      { label: "P90 — conservative",      key: "p90", scale: 0.87 },
+      { label: "P90 — conservative",      key: "p90", scale: 0.88 },
       { label: "P95 — very conservative", key: "p95", scale: 1.00 },
     ];
 

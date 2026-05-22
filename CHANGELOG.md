@@ -5,7 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cum-delta window boundary off-by-one** in `src/extract.py`. The four cumulative-sum energy columns (`grid_import_wh`, `grid_export_wh`, `battery_charged_wh`, `battery_discharged_wh`) were read at `sum @ 18:00 prior − sum @ 11:00`, which spans `19:00 prior → 12:00 today` because HA stores the `sum` for bucket `T` as the reading at `T+1h`. Corrected to `sum @ 17:00 prior − sum @ 10:00`. Missed the 18:00–19:00 hour and wrongly included 11:00–12:00 (significant under GloBird midday charging — one night showed 2,584 Wh grid import vs ~43 Wh actual). `windows.py`, `DATASET.md`, and `DECISIONS.md` updated; `ts_11_today` removed from `DayWindows`; `extraction_meta.schema_version` corrected to 1.4.0. Dataset rebuilt; all three validation fixtures re-verified.
+
+### Added
+
+- `tools/retrain.py` — refits the four-zone model from the dataset DB (held-out validation + proposed `config.yaml` block). Requires the new optional `tools` dependency group (numpy).
+
 ### Changed
+
+- **Model retrained (2026-05-22)** after the cum-delta fix, on 858 trainable nights. New coefficients/percentiles/buffers in `config.yaml` (and `tests/conftest.py` test reference). Heating R² 0.77 → 0.83; cooling R² 0.37 → 0.52; P95 buffers shrank (heating 3.562 → 2.649, cooling 3.136 → 2.431) as the boundary fix removed spurious 11:00–12:00 noise. Held-out violation rate 0.8% heating / 0.0% cooling. `confidence_scale` in `src/model.py` recomputed (0.31/0.58/0.87 → 0.33/0.58/0.88; negligible drift).
+- **Zone bands reviewed and retained at 17/19/21 °C.** The retrain made the mild (19–21 °C) table sit above the warm-boundary (17–19 °C) table; a 1 °C consumption profile confirmed this is correct (the minimum sits in 17–19 °C; 19–21 °C is the cooling shoulder). "mild" is a documented misnomer; bands unchanged. See new DECISIONS.md entry.
+- `pyproject.toml` — added optional `tools` dependency group (numpy) for dev/analysis scripts; runtime deps unchanged.
+- **`tools/nodered-flow.json` and `tools/predictor.html` resynced** to the retrained coefficients/percentiles/buffers. The Node-RED confidence buffer-scale ladder was aligned to `model.py` (`{0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}`; previously P50=0.00, P90=0.87) so the flow faithfully mirrors the canonical model as the stand-in for the eventual HA integration. Requires re-import into Node-RED to take effect. CLAUDE.md documents the three-copy sync rule + redeploy requirement.
 
 - `tools/backtest.py` — reworked from four scenarios to nine. Actual-SoC scenarios dropped (GloBird overnight charging makes full-charge the operating reality). Added naive baselines (3-day rolling average, 7-day rolling average, seasonal fixed dataset medians) to benchmark model value. Added fixed-confidence model variants at P75 and P50. Added seasonal aggressive variant (P95 winter / P75 shoulder / P50 summer).
 - `tools/backtest_report.html` / `tools/backtest_report.json` — backtest now outputs both HTML and JSON. Summary table excludes winter (Jun–Aug) as structurally loss-making across all scenarios. "Efficiency" column replaced with **net capture** = `net ÷ perfect_net`, which accounts for the $0.28/kWh buyback vs $0.15/kWh export rate asymmetry. Net capture colour thresholds calibrated to non-winter range: ≥65% green, ≥55% amber, <55% red.

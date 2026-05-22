@@ -198,6 +198,22 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 
 **Evidence:** Cross-checked against the HA history chart for Feb 4 2026: chart showed ~79% at 11am AEDT, our `soc_at_11am` calculation returned 79.4% from the 10:00 bucket mean.
 
+### Cumulative-sum boundary: read the bucket one hour earlier
+
+**Decision:** To read the cumulative meter value **at** a boundary hour H, query the `sum` column of the bucket labelled `H−1h` (i.e. `start_ts = H−1h`). Concretely: `grid_import_wh`, `grid_export_wh`, `battery_charged_wh`, `battery_discharged_wh` are all computed as `sum @ 10:00 row date − sum @ 17:00 prior day` — not `sum @ 11:00 − sum @ 18:00`.
+**Status:** Locked.
+**Date:** 2026-05-22
+
+**Rationale:** HA's hourly bucket with `start_ts = T` stores the cumulative meter reading at the **end** of that bucket (time `T+1h`), not the start. This was confirmed empirically: the delta between the `start_ts=16:00` and `start_ts=17:00` `sum` values for the grid-consumed sensor (`metadata_id=251`) on 19 May 2026 AEST was +5 Wh, and the HA chart confirmed 5 Wh was consumed during the **17:00–18:00** hour — i.e. the energy for `[T, T+1h)` lands in the bucket ending at `T+1h`, proving `sum @ T = reading at T+1h`.
+
+**Note:** This is the cumulative-sensor analogue of the "Value at 6pm = mean of the 17:00 bucket" decision above, which applies to _mean_ sensors. Both use `H−1h` to read the value "at" hour H, but for different reasons: mean sensors use the 17:00 bucket because it is the last complete hour before 18:00; cumulative sensors use the 17:00 bucket because its stored `sum` is the reading at 18:00.
+
+**Impact:** The prior code used `sum @ 18:00 − sum @ 11:00`, which was the delta over `[19:00 prior, 12:00 today]` instead of the correct `[18:00 prior, 11:00 today]` — missing the 18:00–19:00 hour and wrongly including the 11:00–12:00 hour. The error is small on quiet boundary hours but large whenever there is significant grid or battery activity at 11:00–12:00 (e.g. GloBird free-power charging). This bug was found on 20 May 2026 when `grid_import_wh` showed 2,584 Wh against a known actual of ~43 Wh; the 2,541 Wh excess was a grid spike during 11:00–12:00 that the wrong boundary included. The fix was applied in the same conversation and the dataset rebuilt.
+
+**Supersedes:** the wrong statement in DATASET.md (now corrected) that `sum @ start_ts=18:00` is the reading "immediately at the start of bucket [18:00, 19:00)".
+
+---
+
 ### Curtailment threshold at 99%, not 100%
 
 **Decision:** `curtailment_likely = 1` when `max_soc_prev_daylight ≥ 99`.
@@ -288,18 +304,48 @@ The extraction script detects likely new gaps automatically: a large energy imba
 
 With no predictive signal, an OLS regression in this band is no better than a mean estimate but carries the overhead of coefficients that can mislead. An empirical percentile table is more honest: it accurately represents the historical distribution and provides correctly-sized safety buffers without implying a spurious relationship with temperature.
 
-**Coefficients and percentiles (config.yaml):**
+**Coefficients and percentiles (config.yaml) — refit 2026-05-22 after the cum-delta boundary fix (see "Zone bands retained at 17/19/21 after retraining" below). Original values in parentheses:**
 
-- Heating with Solcast: `19.7258 − 0.7756×temp − 0.0703×solcast_kwh` (R²=0.77, n=287, temp < 17°C)
-- Heating temp-only: `18.8039 − 0.8614×temp` (R²=0.71, fallback when Solcast unavailable)
-- Warm boundary empirical: P50=4.76, P75=6.00, P90=6.99, P95=8.05 kWh (n=114, 17–19°C)
-- Mild empirical: P50=4.60, P75=6.58, P90=7.83, P95=8.43 kWh (n=78, 19–21°C)
-- Cooling with humidity: `−13.4046 + 0.7231×temp + 0.0595×humidity_pct` (R²=0.37, n=49)
-- Cooling temp-only: `−6.756 + 0.660×temp` (fallback when humidity unavailable)
+- Heating with Solcast: `22.5759 − 0.9593×temp − 0.016243×solcast_kwh` (R²=0.83, n=352, temp < 17°C; was `19.7258 − 0.7756×temp − 0.0703×solcast_kwh`, R²=0.77)
+- Heating temp-only: `22.4741 − 1.0043×temp` (R²=0.82, n=602; was `18.8039 − 0.8614×temp`, R²=0.71)
+- Warm boundary empirical: P50=5.98, P75=6.81, P90=7.78, P95=8.78 kWh (n=114, 17–19°C; was 4.76/6.00/6.99/8.05)
+- Mild empirical: P50=6.80, P75=7.84, P90=8.51, P95=9.00 kWh (n=78, 19–21°C; was 4.60/6.58/7.83/8.43)
+- Cooling with humidity: `−9.6822 + 0.7163×temp + 0.028676×humidity_pct` (R²=0.52, n=64; was `−13.4046 + 0.7231×temp + 0.0595×humidity_pct`, R²=0.37)
+- Cooling temp-only: `−5.1760 + 0.5965×temp` (was `−6.756 + 0.660×temp`)
+- P95 buffers: heating 2.649 kWh (was 3.562), cooling 2.431 kWh (was 3.136) — both shrank because the boundary fix removed spurious 11:00–12:00 activity that was inflating residual noise.
 
-**Held-out test performance (stratified, every 5th night per zone):** violation rate 2.4% (target ≤5%); P95 error buffer (3.56 kWh) well-calibrated on cold heating nights.
+**Held-out test performance (stratified, every 5th night per zone):** post-refit violation rate 0.8% heating / 0.0% cooling at the P95 buffer (target ≤5%). The pre-fix figure was 2.4% at a larger (3.56 kWh) buffer.
 
-**Known weakness:** The cooling zone has only ~49 training nights (one summer). R²=0.37 is expected to improve materially once a second summer of data is available.
+**Known weakness:** The cooling zone has only ~64 training nights (one summer). R²=0.52 is expected to improve materially once a second summer of data is available.
+
+---
+
+### Zone bands retained at 17/19/21 after retraining
+
+**Decision:** Keep the four-zone boundaries at 17 / 19 / 21 °C (on `bom_temp_mean`) unchanged after the 2026-05-22 retrain. Do not merge, move, or rename them.
+**Status:** Locked.
+**Date:** 2026-05-22
+
+**Context:** The cum-delta boundary bug fix (see "Cumulative-sum boundary" decision) changed every `consumption_wh` value, so the model was retrained from the rebuilt dataset (`tools/retrain.py`, 858 trainable nights = `absence_period=0 AND data_gap=0`). The retrain surfaced a result worth scrutinising: the **mild** table (19–21 °C) now sits _consistently above_ the **warm-boundary** table (17–19 °C) — e.g. P50 6.80 vs 5.98 kWh. That looks backwards (warmer band → less heating → ought to be lower).
+
+**Why the bands are nonetheless correct.** A 1 °C-bin consumption profile shows the true consumption minimum sits at **17–19 °C** (~5.9–6.0 kWh median), which is exactly the warm-boundary band. The 19–21 °C band (~6.8 kWh) is already on the _cooling_ upslope — a 19–21 °C overnight _mean_ in summer typically implies a warm 6–9 pm evening with some AC load. So mild > warm is a real, physical feature, not a defect:
+
+| 1 °C bin | median kWh |   | 1 °C bin | median kWh |
+| -------- | ---------- | - | -------- | ---------- |
+| 15–16    | 6.41       |   | 19–20    | 6.85       |
+| 16–17    | 6.22       |   | 20–21    | 6.76       |
+| 17–18    | 5.92 (min) |   | 21–22    | 7.41       |
+| 18–19    | 6.01       |   | 22–23    | 8.10       |
+
+**"Mild" is a retained misnomer.** The 19–21 °C band is really a _low-cooling shoulder_, not a sweet spot. Renaming it was rejected: the zone name is hardcoded in three independent model implementations (`src/model.py`, `tools/predictor.html`, `tools/nodered-flow.json`) plus `config.py`/`config.yaml` fields and tests, so a rename is pure cosmetic churn against the Phase 2→3 contract. The misnomer is instead documented in code (`src/model.py` module docstring + inline comment).
+
+**Alternatives considered:**
+
+- _Merge warm + mild into one 17–21 °C shoulder table_ — rejected: blurs the ~0.8 kWh step at 19 °C, over-buffering 17–19 °C nights and under-buffering 19–21 °C ones.
+- _Extend the cooling OLS down to 19 °C_ — rejected: within 19–21 °C consumption is essentially flat (6.85 / 6.76), so the fitted slope ≈ 0 — no better than the current empirical median, while losing the percentile tail the safety buffer relies on.
+- _Move boundaries (e.g. heating cut to 16 °C)_ — rejected: the profile shows 17/19/21 already align with the heating downslope / flat minimum / cooling upslope structure.
+
+**Revisit when:** a second full summer of cooling data lands (already an open decision), or live operation shows a specific zone systematically miscalibrated.
 
 ---
 

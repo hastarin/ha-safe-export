@@ -7,6 +7,12 @@ dependencies = [
     "tzdata; sys_platform == 'win32'",
 ]
 
+[project.optional-dependencies]
+# Dev/analysis only — not required by the runtime predictor. Used by tools/retrain.py.
+tools = [
+    "numpy>=1.26",
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

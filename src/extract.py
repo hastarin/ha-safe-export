@@ -107,10 +107,10 @@ def extract_row(
     ).fetchone()
     consumption_wh_load = round(row[0]) if row and row[0] is not None else None
 
-    grid_import_wh = _cum_delta(ha, ids["grid_import"], w.ts_18_prior, w.ts_11_today)
-    grid_export_wh = _cum_delta(ha, ids["grid_export"], w.ts_18_prior, w.ts_11_today)
-    battery_charged_wh = _cum_delta(ha, ids["battery_charged"], w.ts_18_prior, w.ts_11_today)
-    battery_discharged_wh = _cum_delta(ha, ids["battery_discharged"], w.ts_18_prior, w.ts_11_today)
+    grid_import_wh = _cum_delta(ha, ids["grid_import"], w.ts_17_prior, w.ts_10_today)
+    grid_export_wh = _cum_delta(ha, ids["grid_export"], w.ts_17_prior, w.ts_10_today)
+    battery_charged_wh = _cum_delta(ha, ids["battery_charged"], w.ts_17_prior, w.ts_10_today)
+    battery_discharged_wh = _cum_delta(ha, ids["battery_discharged"], w.ts_17_prior, w.ts_10_today)
 
     required = {
         "grid_import_wh": grid_import_wh,
@@ -369,7 +369,7 @@ def extract_all(
         (p.start_date.isoformat() for p in cfg.providers if p.name == "globird"), ""
     )
     for key, value in [
-        ("schema_version", "1.3.0"),
+        ("schema_version", "1.4.0"),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
         ("globird_start_date", globird_start),
