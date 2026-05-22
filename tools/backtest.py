@@ -30,6 +30,14 @@ DB_PATH = "data/dataset.db"
 EXPORT_RATE  = 0.15   # $/kWh
 BUYBACK_RATE = 0.28   # $/kWh
 
+# Defaults; main() overrides BATTERY_WH / HARD_FLOOR_FRAC / SOFT_FLOOR_FRAC from
+# config.yaml (battery_capacity_wh, battery_reserve_fraction) so the evaluation
+# floor matches what predict() assumes for its decisions.
+BATTERY_WH        = 13800.0   # BYD 13.8 kWh
+HARD_FLOOR_FRAC   = 0.10      # grid-discharge floor; breaching it = grid buyback (shortfall)
+SOFT_FLOOR_MARGIN = 0.10      # 'perfect' export leaves this cushion above the hard floor
+SOFT_FLOOR_FRAC   = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN  # 0.20
+
 ABSENCE_START  = date(2025, 9, 28)
 ABSENCE_END    = date(2025, 11, 3)
 BACKTEST_START = date(2025, 5, 11)
@@ -68,11 +76,13 @@ def load_rows(db_path: str) -> dict[str, dict]:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     rows = conn.execute("""
-        SELECT date, soc_at_6pm, max_soc_prev_daylight, bom_temp_mean, bom_humidity_mean,
-               solcast_forecast_tomorrow_wh, consumption_wh, data_gap
+        SELECT date, soc_at_6pm, min_soc_overnight, max_soc_prev_daylight,
+               bom_temp_mean, bom_humidity_mean, solcast_forecast_tomorrow_wh,
+               consumption_wh, evening_grid_export_wh, data_gap
         FROM daily_observations
         WHERE (data_gap = 0 OR data_gap IS NULL)
           AND soc_at_6pm IS NOT NULL
+          AND min_soc_overnight IS NOT NULL
           AND bom_temp_mean IS NOT NULL
           AND consumption_wh IS NOT NULL
         ORDER BY date
@@ -89,13 +99,48 @@ def adjusted_soc(row: dict) -> float:
     return soc
 
 
-def accum_night(monthly: dict, ym: str, avail_wh: float, predicted_export_wh: float, actual_wh: float) -> None:
-    """Record one night's economics into the monthly accumulator."""
-    perfect_export = max(0.0, avail_wh - actual_wh)
-    revenue        = (predicted_export_wh / 1000) * EXPORT_RATE
-    shortfall_wh   = max(0.0, actual_wh - (avail_wh - predicted_export_wh))
+def baseline_trough_soc(row: dict, soc_used: float) -> float:
+    """Reconstruct the no-export overnight SoC trough (%) for this night.
+
+    `min_soc_overnight` is what actually happened — but it is depressed by any
+    real battery-to-grid export during the peak. Add that energy back (via
+    `evening_grid_export_wh`) to recover the trough that *would* have occurred
+    with no deliberate export. Also shift by the full-charge adjustment applied
+    to the 6pm SoC (`soc_used − soc_at_6pm`), since a higher start lifts the whole
+    overnight trajectory — including the trough — by the same amount.
+    """
+    delta_full_charge = soc_used - row["soc_at_6pm"]
+    evening_export_wh = row.get("evening_grid_export_wh") or 0
+    trough = row["min_soc_overnight"] + delta_full_charge + (evening_export_wh / BATTERY_WH) * 100.0
+    return min(100.0, trough)
+
+
+def accum_night(
+    monthly: dict, ym: str, *, export_wh: float, trough_soc: float
+) -> None:
+    """Record one night's economics using the SoC-trough metric.
+
+    `trough_soc` is the reconstructed no-export overnight trough (%). Exporting
+    `export_wh` at 6–9pm lowers the whole trajectory, so the simulated trough is
+    `trough_soc − export_wh/capacity`. A shortfall (grid buyback) is charged only
+    for the portion that pushes the trough below the HARD floor — and only the
+    *extra* breach the export causes (a night that was already short with no
+    export is not blamed on the export decision). The 'perfect' benchmark exports
+    down to the SOFT floor (hard floor + margin), leaving a cushion.
+    """
+    hard_pct = HARD_FLOOR_FRAC * 100.0
+    soft_pct = SOFT_FLOOR_FRAC * 100.0
+
+    sim_trough  = trough_soc - (export_wh / BATTERY_WH) * 100.0
+    base_breach = max(0.0, (hard_pct - trough_soc) / 100.0 * BATTERY_WH)   # unavoidable, no-export
+    sim_breach  = max(0.0, (hard_pct - sim_trough) / 100.0 * BATTERY_WH)
+    shortfall_wh = max(0.0, sim_breach - base_breach)                      # export-caused only
+
+    perfect_export = max(0.0, (trough_soc - soft_pct) / 100.0 * BATTERY_WH)
+
+    revenue        = (export_wh / 1000) * EXPORT_RATE
     shortfall_cost = (shortfall_wh / 1000) * BUYBACK_RATE
-    opportunity    = max(0.0, (perfect_export - predicted_export_wh) / 1000) * EXPORT_RATE
+    opportunity    = max(0.0, (perfect_export - export_wh) / 1000) * EXPORT_RATE
     perfect_net    = (perfect_export / 1000) * EXPORT_RATE
 
     monthly[ym]["revenue"]     += revenue
@@ -149,7 +194,11 @@ def run_model_scenario(
             confidence=confidence,
         )
         result = predict(inp, cfg)
-        accum_night(monthly, ym, result.available_discharge_wh, result.safe_export_wh, row["consumption_wh"])
+        accum_night(
+            monthly, ym,
+            export_wh=result.safe_export_wh,
+            trough_soc=baseline_trough_soc(row, soc),
+        )
         d += timedelta(days=1)
     return monthly
 
@@ -185,13 +234,12 @@ def run_rolling_scenario(rows: dict, window: int, start: date | None = None) -> 
 
         avg_consumption_wh = sum(recent) / len(recent)
         soc        = adjusted_soc(row)
-        cfg_obj    = None  # not used
-        battery_wh = soc / 100.0 * 13800  # BYD 13.8 kWh
-        min_soc_wh = 0.10 * 13800         # 10% min SoC
+        battery_wh = soc / 100.0 * BATTERY_WH
+        min_soc_wh = HARD_FLOOR_FRAC * BATTERY_WH
         avail_wh   = max(0.0, battery_wh - min_soc_wh)
         export_wh  = max(0.0, avail_wh - avg_consumption_wh)
 
-        accum_night(monthly, ym, avail_wh, export_wh, row["consumption_wh"])
+        accum_night(monthly, ym, export_wh=export_wh, trough_soc=baseline_trough_soc(row, soc))
         d += timedelta(days=1)
     return monthly
 
@@ -252,7 +300,11 @@ def run_blended_scenario(
         total_needed_wh = blended_point_wh + buffer_wh
         export_wh = max(0.0, result.available_discharge_wh - total_needed_wh)
 
-        accum_night(monthly, ym, result.available_discharge_wh, export_wh, row["consumption_wh"])
+        accum_night(
+            monthly, ym,
+            export_wh=export_wh,
+            trough_soc=baseline_trough_soc(row, adjusted_soc(row)),
+        )
         d += timedelta(days=1)
     return monthly
 
@@ -276,12 +328,12 @@ def run_seasonal_fixed_scenario(rows: dict, start: date | None = None) -> dict[s
 
         fixed_wh  = SEASONAL_FIXED_WH[season(d)]
         soc       = adjusted_soc(row)
-        battery_wh = soc / 100.0 * 13800
-        min_soc_wh = 0.10 * 13800
+        battery_wh = soc / 100.0 * BATTERY_WH
+        min_soc_wh = HARD_FLOOR_FRAC * BATTERY_WH
         avail_wh   = max(0.0, battery_wh - min_soc_wh)
         export_wh  = max(0.0, avail_wh - fixed_wh)
 
-        accum_night(monthly, ym, avail_wh, export_wh, row["consumption_wh"])
+        accum_night(monthly, ym, export_wh=export_wh, trough_soc=baseline_trough_soc(row, soc))
         d += timedelta(days=1)
     return monthly
 
@@ -342,6 +394,7 @@ def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
         if val < -0.5: return "neg"
         return ""
 
+    computed = []
     for key, desc in SCENARIOS:
         m_data = results[key]
         tot_rev   = sum(m["revenue"]     for m in m_data.values())
@@ -350,6 +403,11 @@ def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
         tot_nights = sum(m["nights"]     for m in m_data.values())
         net = tot_rev - tot_short
         cap = net / tot_perf * 100 if tot_perf > 0 else 0.0
+        computed.append((cap, key, desc, tot_rev, tot_short, net, tot_nights))
+
+    computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
+
+    for cap, key, desc, tot_rev, tot_short, net, tot_nights in computed:
         is_model = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
         badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
         warn = f' <span class="skipped">(n={tot_nights})</span>' if tot_nights <= nights_warn else f' <span style="color:#555;font-size:0.8rem">(n={tot_nights})</span>'
@@ -444,8 +502,9 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
           </table>
         </section>""")
 
-    # Summary comparison table — winter (Jun–Aug) excluded as loss-making in all scenarios
-    summary_rows = []
+    # Summary comparison table — winter (Jun–Aug) excluded as loss-making in all scenarios.
+    # Sorted by net capture descending.
+    summary_computed = []
     for key, label in SCENARIOS:
         m_data          = results[key]
         is_model        = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
@@ -455,7 +514,13 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
         tot_perfect_net = sum(m["perfect_net"] for m in non_winter.values())
         tot_net         = tot_rev - tot_short
         tot_net_capture = tot_net / tot_perfect_net * 100 if tot_perfect_net > 0 else 0.0
-        badge           = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
+        summary_computed.append((tot_net_capture, key, label, is_model, tot_rev, tot_short, tot_net))
+
+    summary_computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
+
+    summary_rows = []
+    for tot_net_capture, key, label, is_model, tot_rev, tot_short, tot_net in summary_computed:
+        badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
         summary_rows.append(f"""
           <tr>
             <td>{badge} <strong>{key}</strong> — {label}</td>
@@ -595,6 +660,13 @@ def build_json(results: dict) -> dict:
 def main() -> None:
     cfg  = load_config(Path("config/config.yaml"))
     rows = load_rows(DB_PATH)
+
+    # Drive battery capacity + discharge floor from config (not hardcoded), so the
+    # backtest's evaluation floor matches what predict() assumes for its decisions.
+    global BATTERY_WH, HARD_FLOOR_FRAC, SOFT_FLOOR_FRAC
+    BATTERY_WH      = cfg.battery_capacity_wh
+    HARD_FLOOR_FRAC = cfg.battery_reserve_fraction
+    SOFT_FLOOR_FRAC = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN
 
     results = {}
 

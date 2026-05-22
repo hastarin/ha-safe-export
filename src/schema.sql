@@ -1,4 +1,4 @@
--- Schema version: 1.4.0
+-- Schema version: 1.5.0
 CREATE TABLE IF NOT EXISTS daily_observations (
     date TEXT PRIMARY KEY,                  -- 'YYYY-MM-DD' (the 11am-endpoint date)
     provider TEXT NOT NULL,                 -- 'ea' | 'amber' | 'globird'
@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS daily_observations (
     grid_export_wh INTEGER,                 -- Wh
     battery_charged_wh INTEGER,             -- Wh
     battery_discharged_wh INTEGER,          -- Wh
+    evening_grid_export_wh INTEGER,         -- Wh, grid export over 6–9pm peak; proxy for deliberate battery-to-grid export
 
     curtailment_likely INTEGER NOT NULL,    -- 0/1
 

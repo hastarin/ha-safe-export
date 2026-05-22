@@ -61,6 +61,7 @@ The `state` column is the raw meter reading; `sum` is the HA-corrected cumulativ
 - SQL parameter binding always (never string interpolation into queries)
 - Connect to the HA DB read-only: `sqlite3.connect(f"file:{path}?mode=ro", uri=True)`
 - The dataset DB is the project's own SQLite file, separate from the HA DB
+- Don't waste time/tokens trying to fix lint errors on markdown files, ask the user to fix them
 
 ## Testing
 

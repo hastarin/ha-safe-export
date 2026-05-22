@@ -111,6 +111,10 @@ def extract_row(
     grid_export_wh = _cum_delta(ha, ids["grid_export"], w.ts_17_prior, w.ts_10_today)
     battery_charged_wh = _cum_delta(ha, ids["battery_charged"], w.ts_17_prior, w.ts_10_today)
     battery_discharged_wh = _cum_delta(ha, ids["battery_discharged"], w.ts_17_prior, w.ts_10_today)
+    # Grid export over the 6–9pm peak only (proxy for deliberate battery-to-grid export).
+    # Reads cumulative at 18:00 (sum @ 17:00) and 21:00 (sum @ 20:00). Not in `required` —
+    # NULL on a gap is acceptable; the backtest treats missing as zero export.
+    evening_grid_export_wh = _cum_delta(ha, ids["grid_export"], w.ts_17_prior, w.ts_20_prior)
 
     required = {
         "grid_import_wh": grid_import_wh,
@@ -226,6 +230,7 @@ def extract_row(
         "grid_export_wh": grid_export_wh,
         "battery_charged_wh": battery_charged_wh,
         "battery_discharged_wh": battery_discharged_wh,
+        "evening_grid_export_wh": evening_grid_export_wh,
         "curtailment_likely": curtailment_likely,
         "extracted_at": now_utc,
         "extraction_version": __version__,
@@ -337,6 +342,7 @@ def extract_all(
                 bom_humidity_mean, bom_humidity_max, median_indoor_humidity,
                 solar_wh_before_11am, consumption_wh, consumption_wh_load,
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
+                evening_grid_export_wh,
                 curtailment_likely, extracted_at, extraction_version
             ) VALUES (
                 :date, :provider, :guests, :absence_period, :data_gap,
@@ -348,6 +354,7 @@ def extract_all(
                 :bom_humidity_mean, :bom_humidity_max, :median_indoor_humidity,
                 :solar_wh_before_11am, :consumption_wh, :consumption_wh_load,
                 :grid_import_wh, :grid_export_wh, :battery_charged_wh, :battery_discharged_wh,
+                :evening_grid_export_wh,
                 :curtailment_likely, :extracted_at, :extraction_version
             )
             """,
@@ -369,7 +376,7 @@ def extract_all(
         (p.start_date.isoformat() for p in cfg.providers if p.name == "globird"), ""
     )
     for key, value in [
-        ("schema_version", "1.4.0"),
+        ("schema_version", "1.5.0"),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
         ("globird_start_date", globird_start),

@@ -1,4 +1,4 @@
-# TODO — backtest re-run on corrected data + retrained model
+# TODO — live test the retrained model + follow-ups
 
 ## Done (2026-05-22)
 
@@ -29,46 +29,41 @@
   canonical model as the stand-in for the eventual HA integration — documented in
   CLAUDE.md. **Re-import the flow into Node-RED to pick up the new coefficients + scales.**
 
-## Now: re-run the backtest on the corrected data + retrained model
+- **Backtest re-run + reworked to the SoC-trough metric (v3) — DONE.** Evaluates against
+  the actual overnight trough (`min_soc_overnight`), reconstructing the no-export baseline
+  via the new `evening_grid_export_wh` column + full-charge adjustment. "Perfect" drains to
+  a soft floor (hard + 10 pts); shortfall charged only for the incremental breach below the
+  hard floor. Capacity + floor now read from `config.yaml`. Summary tables sorted by net
+  capture descending. New `evening_grid_export_wh` column added (schema 1.5.0, migration
+  005, `ts_20_prior`); fixtures + DATASET.md updated; `pytest` green. Resolves the old
+  design questions (shortfall metric, actual floor, perfect benchmark, sorting).
+- **Node-RED default output switched P90 → P50.** **Re-import the flow into Node-RED to
+  deploy.** Deployment confidence stays Open (see DECISIONS.md) — P50 is a live test.
 
-All prior backtest numbers (the tables in DECISIONS.md "Backtest results" / "Backtest v2",
-and `tools/backtest_report.{html,json}`) were computed on the **buggy data and old
-coefficients** — do not trust any of them until the backtest is re-run.
+## Now: live test via Node-RED + observe
 
-`.venv/Scripts/python -m tools.backtest`
+- **Deploy:** re-import `tools/nodered-flow.json` into Node-RED (it now carries the
+  retrained coefficients, aligned confidence scales, and P50 default output). Eyeball the
+  first few nights' export vs actual SoC trough.
+- **Deployment confidence is Open.** Backtest validated only a 14-day window so far (model
+  exported with zero floor breaches; P50 best on net capture but full-period numbers are
+  caveated by the full-charge assumption + in-sample baselines). Accumulate real nights
+  before locking P50 vs P75.
 
-### Backtest work already committed (52a813c)
+## Add the SoC-minimum sensor to the dataset (future)
 
-Committed in `tools/backtest.py` (commit `52a813c`) — these run but their numbers are
-based on the old buggy data + old coefficients, so re-run and re-read them:
+The discharge floor is currently the fixed `config.yaml` `reserve_fraction` (0.10) — fine
+for now, since we have **no historical record** of what the floor was per night.
 
-1. `BACKTEST_END` moved to **2026-05-20**.
-2. Six **blended scenarios** I1–I6: consumption = α·model + (1−α)·3-day-rolling-avg,
-   α ∈ {0.75, 0.50, 0.25}, buffer-fixed and buffer-scaled variants
-   (`run_blended_scenario()` + SCENARIOS entries + main() wiring).
-3. **Recent-window sections**: 14-day and 30-day summary tables at the top of the HTML
-   (`start` param on all 4 run_* functions, `_recent_summary_rows()`, two new HTML
-   sections in `build_html`). **The last-14-days view is the priority lens** for judging
-   the retrained model's near-term behaviour.
-
-### Open design questions to resolve (now that the data is correct)
-
-- **Shortfall metric: total consumption vs net battery draw.** Should `actual_wh` be
-  total home `consumption_wh`, or **net battery draw** (`battery_discharged_wh −
-  battery_charged_wh`)? Stated goal: **the battery alone carries the house to 11am with
-  NO grid draw in the window.** The bad data derailed this discussion before — revisit.
-- **Use actual `min_soc_overnight`** rather than a hardcoded 10% floor.
-- **Reconsider the "perfect" benchmark** — maybe `min_soc + 10%` headroom rather than
-  draining to exactly `min_soc`.
-- **Sort summary tables by net capture descending.**
-- **Deployment confidence level.** The flow now exports P50 (aligned to scale 0.33).
-  Use the backtest — especially the last-14-days view — to judge whether P50 is the
-  right deployment confidence or whether to lean more conservative (P75). Note: corrected
-  consumption is *higher* than before, so the retrained model recommends **less** export
-  at every confidence level — the old (buggy) model was over-recommending. Quantify this.
+- `sensor.byd_battery_box_premium_hv_soc_minimum` exists in HA but is recorded in
+  **short-term `states` only — it has NO long-term statistics** (not in `statistics_meta`),
+  so it is not yet usable by the extraction (which reads the `statistics` table).
+- **Action:** enable long-term statistics for it in HA (needs a `state_class`), then add a
+  per-night floor column to the dataset and have the backtest/model use the actual floor
+  instead of the fixed 0.10. Only useful going forward (no backfill possible).
 
 ## Later (still deferred)
 
 - **Deployment** of safe-export recommendations targeted for **September 2026** (winter
-  Jun–Aug is structurally loss-making). Re-confirm with the re-run backtest.
+  Jun–Aug is structurally loss-making). Re-confirm with the backtest.
 - **Cooling model** still only ~64 nights (one summer); revisit after a second summer.

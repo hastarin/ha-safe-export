@@ -38,6 +38,7 @@ WH_COLS = {
     "grid_export_wh",
     "battery_charged_wh",
     "battery_discharged_wh",
+    "evening_grid_export_wh",
     "solcast_forecast_tomorrow_wh",
 }
 EXACT_COLS = {"provider", "absence_period", "guests", "curtailment_likely"}

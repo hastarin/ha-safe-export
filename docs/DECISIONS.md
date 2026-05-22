@@ -330,12 +330,12 @@ With no predictive signal, an OLS regression in this band is no better than a me
 
 **Why the bands are nonetheless correct.** A 1 °C-bin consumption profile shows the true consumption minimum sits at **17–19 °C** (~5.9–6.0 kWh median), which is exactly the warm-boundary band. The 19–21 °C band (~6.8 kWh) is already on the _cooling_ upslope — a 19–21 °C overnight _mean_ in summer typically implies a warm 6–9 pm evening with some AC load. So mild > warm is a real, physical feature, not a defect:
 
-| 1 °C bin | median kWh |   | 1 °C bin | median kWh |
-| -------- | ---------- | - | -------- | ---------- |
-| 15–16    | 6.41       |   | 19–20    | 6.85       |
-| 16–17    | 6.22       |   | 20–21    | 6.76       |
-| 17–18    | 5.92 (min) |   | 21–22    | 7.41       |
-| 18–19    | 6.01       |   | 22–23    | 8.10       |
+| 1 °C bin | median kWh |     | 1 °C bin | median kWh |
+| -------- | ---------- | --- | -------- | ---------- |
+| 15–16    | 6.41       |     | 19–20    | 6.85       |
+| 16–17    | 6.22       |     | 20–21    | 6.76       |
+| 17–18    | 5.92 (min) |     | 21–22    | 7.41       |
+| 18–19    | 6.01       |     | 22–23    | 8.10       |
 
 **"Mild" is a retained misnomer.** The 19–21 °C band is really a _low-cooling shoulder_, not a sweet spot. Renaming it was rejected: the zone name is hardcoded in three independent model implementations (`src/model.py`, `tools/predictor.html`, `tools/nodered-flow.json`) plus `config.py`/`config.yaml` fields and tests, so a rename is pure cosmetic churn against the Phase 2→3 contract. The misnomer is instead documented in code (`src/model.py` module docstring + inline comment).
 
@@ -417,12 +417,12 @@ The Solcast coefficient in the consumption regression (−0.070291 kWh per kWh S
 
 **Rationale:** A full-year backtest (`tools/backtest.py`, covering 2025-05-11 to 2026-05-08) evaluated four scenarios across 353 nights:
 
-| Scenario                         | Revenue  | Shortfall  | Net         |
-| -------------------------------- | -------- | ---------- | ----------- |
-| A: Actual SoC, fixed P90         | $104.98  | -$133.45   | **-$28.47** |
-| B: Full-charge SoC, fixed P90    | $110.52  | -$41.30    | **+$69.22** |
-| C: Actual SoC, seasonal Px       | see HTML | see HTML   | see HTML    |
-| D: Full-charge SoC, seasonal Px  | see HTML | see HTML   | see HTML    |
+| Scenario                        | Revenue  | Shortfall | Net         |
+| ------------------------------- | -------- | --------- | ----------- |
+| A: Actual SoC, fixed P90        | $104.98  | -$133.45  | **-$28.47** |
+| B: Full-charge SoC, fixed P90   | $110.52  | -$41.30   | **+$69.22** |
+| C: Actual SoC, seasonal Px      | see HTML | see HTML  | see HTML    |
+| D: Full-charge SoC, seasonal Px | see HTML | see HTML  | see HTML    |
 
 Rates used: $0.15/kWh export, $0.28/kWh grid buyback. Absence period (Sep 28–Nov 3 2025) used prior-year same-date proxy.
 
@@ -466,25 +466,55 @@ Rates used: $0.15/kWh export, $0.28/kWh grid buyback. Absence period (Sep 28–N
 
 **Full scenario listing (non-winter net / net capture):**
 
-| Scenario | Net capture | Net |
-| -------- | ----------- | --- |
-| A: Model P90 | 51.6% | $102 |
-| B: Model seasonal Px (P95/P90/P75) | 58.3% | $115 |
-| H: Model fixed P75 | 64.0% | $127 |
-| F: Model aggressive seasonal Px (P95/P75/P50) | 64.4% | $127 |
-| G: Model fixed P50 | 69.7% | $138 |
-| C: 3-day rolling average | 64.2% | $127 |
-| D: 7-day rolling average | 63.3% | $125 |
-| E: Seasonal fixed median | 63.3% | $125 |
+| Scenario                                      | Net capture | Net  |
+| --------------------------------------------- | ----------- | ---- |
+| A: Model P90                                  | 51.6%       | $102 |
+| B: Model seasonal Px (P95/P90/P75)            | 58.3%       | $115 |
+| H: Model fixed P75                            | 64.0%       | $127 |
+| F: Model aggressive seasonal Px (P95/P75/P50) | 64.4%       | $127 |
+| G: Model fixed P50                            | 69.7%       | $138 |
+| C: 3-day rolling average                      | 64.2%       | $127 |
+| D: 7-day rolling average                      | 63.3%       | $125 |
+| E: Seasonal fixed median                      | 63.3%       | $125 |
 
 **Caution:** All scenarios are evaluated on training data. The baselines' apparent competitiveness vs the model is flattering; on unseen data they will regress as they have no mechanism for unusual nights (weather events, temperature extremes).
 
 ---
 
-### Deployment confidence level: start at P75, evaluate P50 after one season
+### Backtest v3: SoC-trough metric + evening-export reconstruction
+
+**Decision:** The backtest evaluates an export decision against the actual overnight **SoC trough** (`min_soc_overnight`), not against total `consumption_wh`. The no-export baseline trough is reconstructed by adding back real peak exports (`evening_grid_export_wh`) and the full-charge adjustment. The "perfect" benchmark drains to a **soft floor** (hard floor + 10 pts); a shortfall (grid buyback) is charged only for export that pushes the trough below the **hard floor**, and only the _incremental_ breach the export causes (a night already short with no export is not blamed on the export). The hard floor and capacity are read from `config.yaml`.
+**Status:** Locked (metric); the deployment-confidence conclusion remains Open (below).
+**Date:** 2026-05-22
+
+**Rationale:** The previous metric used `actual_wh = consumption_wh` and "perfect = drain to exactly the floor". That (a) ignored morning solar, (b) ignored overnight SoC timing, and (c) charged shortfall on nights the battery was short even with zero export — visible as an identical "baked-in" shortfall across all confidence levels in the recent window. The SoC trough is the real safety constraint, so evaluating against it is correct.
+
+**Why the new `evening_grid_export_wh` column was needed:** `min_soc_overnight` is the _actual_ trough, depressed by any real battery-to-grid export. The user exports sporadically across all tariff eras (EA, Amber, GloBird), so there is no clean "no-export" period to restrict to. Adding back the peak-window grid export (`evening_grid_export_wh`, the `produced.sum` delta over 18:00–21:00; see DATASET.md) recovers the no-export baseline trough on every night. Caveat: in high summer the 6–9pm window can include some PV→grid, slightly over-crediting headroom; negligible outside summer evenings.
+
+**Findings (corrected data + retrained model):**
+
+- **Recent 14 days (real GloBird, the trustworthy lens):** the model exports with **zero** floor breaches at every confidence level; P50 captures the most (57.8%), matching the 3-day-rolling baseline's net but with zero shortfall vs the baseline's $3.17.
+- **Non-winter full period:** the model looks **safe but conservative** — it under-exports relative to the headroom the trough shows the battery actually had (morning charging/solar means it rarely drops to the consumption-based reservation). Aggressive strategies capture more net because breaches are rare and export revenue ($0.15) outweighs occasional buyback ($0.28).
+- **Caveat:** full-period capture numbers lean heavily on the full-charge (GloBird-to-100%) assumption, which inflates reconstructed headroom, and the baselines are evaluated in-sample. Trust the recent-14-day result far more than the full-period baseline ranking.
+
+**Summary tables** in the HTML report are now sorted by net capture descending.
+
+---
+
+### Deployment confidence level: keep Open; Node-RED runs P50 for live testing
+
+**Decision:** Deployment confidence is **not yet settled**. The Node-RED flow's default output is set to **P50** so live operation exercises the most-capturing level, but no fixed deployment confidence is locked.
+**Status:** Open (only validated on a 14-day window so far).
+**Date:** 2026-05-22 (supersedes the 2026-05-11 "start at P75" position below)
+
+**Rationale:** Under the corrected data + SoC-trough metric, P50 is the best model confidence on net capture and showed **zero floor breaches** over the recent 14 days, with room to possibly push more aggressive. But 14 days is far too little to lock a deployment policy, and the full-period numbers are caveated (full-charge assumption, in-sample baselines). The Node-RED flow exporting P50 is a _live test_, not a locked decision — revisit after a meaningful run of real nights. The earlier P75 starting position is superseded but kept below for history.
+
+---
+
+### (Superseded 2026-05-22) Deployment confidence level: start at P75, evaluate P50 after one season
 
 **Decision:** Deploy at fixed P75 from September 2026. Evaluate moving to P50 after one full shoulder/summer season of live data.
-**Status:** Open (revisit after Sep–Mar 2026/27 season).
+**Status:** Superseded by the entry above (P50 live-test, confidence still Open).
 **Date:** 2026-05-11
 
 **Rationale:** The backtest suggests P50 is the best-performing fixed confidence level on net capture (69.7% non-winter). However this is training-data territory. P75 is the more conservative starting point: it nets $127 non-winter at 64% capture, incurs only $19 shortfall, and sits at the same level as the aggressive baselines. It is a defensible first deployment that limits downside on nights where the model is wrong, while still materially outperforming P90 (+$25 net non-winter).
