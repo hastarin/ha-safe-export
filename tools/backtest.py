@@ -455,7 +455,93 @@ def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
     return "".join(rows_html)
 
 
-def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
+def consumption_accuracy_series(rows: dict, cfg) -> list[dict]:
+    """Per-night predicted vs actual consumption over the backtest window.
+
+    Predicted = the model's central (P50) consumption estimate, so it's a
+    like-for-like usage comparison independent of the export buffer. Residual is
+    actual − predicted (kWh): negative ⇒ model over-predicts (conservative),
+    positive ⇒ under-predicts (less safety margin). Absence-period nights are
+    skipped (their consumption is unrepresentative).
+    """
+    series = []
+    d = BACKTEST_START
+    while d <= BACKTEST_END:
+        ds = d.isoformat()
+        row = rows.get(ds)
+        if row is not None and not (ABSENCE_START <= d <= ABSENCE_END):
+            inp = PredictInputs(
+                soc_at_6pm=row["soc_at_6pm"],
+                bom_temp_mean=row["bom_temp_mean"],
+                bom_humidity_mean=row["bom_humidity_mean"],
+                solcast_forecast_tomorrow_wh=row["solcast_forecast_tomorrow_wh"],
+                confidence=0.50,
+            )
+            res = predict(inp, cfg)
+            pred = res.predicted_consumption_kwh
+            actual = row["consumption_wh"] / 1000.0
+            series.append({"date": ds, "zone": res.zone, "pred": pred,
+                           "actual": actual, "resid": actual - pred})
+        d += timedelta(days=1)
+    return series
+
+
+def _residual_svg(series: list[dict], roll: int = 14) -> str:
+    """Inline SVG: per-night residual dots + a rolling-mean line + zero line."""
+    if not series:
+        return "<p>No data.</p>"
+    W, H = 860, 240
+    ml, mr, mt, mb = 44, 12, 12, 28          # margins
+    pw, ph = W - ml - mr, H - mt - mb
+    resids = [p["resid"] for p in series]
+    lo = min(-3.0, min(resids))
+    hi = max(3.0, max(resids))
+    n = len(series)
+
+    def x(i: int) -> float:
+        return ml + (pw * i / max(1, n - 1))
+
+    def y(v: float) -> float:
+        return mt + ph * (hi - v) / (hi - lo)
+
+    y0 = y(0.0)
+    # rolling mean
+    roll_pts = []
+    for i in range(n):
+        lo_i = max(0, i - roll + 1)
+        window = resids[lo_i:i + 1]
+        roll_pts.append((x(i), y(sum(window) / len(window))))
+    roll_path = " ".join(f"{px:.1f},{py:.1f}" for px, py in roll_pts)
+    dots = "".join(
+        f'<circle cx="{x(i):.1f}" cy="{y(p["resid"]):.1f}" r="1.6" fill="#9bb8d8"/>'
+        for i, p in enumerate(series)
+    )
+    # month gridlines/labels
+    ticks = ""
+    seen = set()
+    for i, p in enumerate(series):
+        ym = p["date"][:7]
+        if ym not in seen:
+            seen.add(ym)
+            px = x(i)
+            ticks += f'<line x1="{px:.1f}" y1="{mt}" x2="{px:.1f}" y2="{mt+ph}" stroke="#eee"/>'
+            ticks += (f'<text x="{px:.1f}" y="{H-8}" font-size="9" fill="#999" '
+                      f'text-anchor="middle">{MONTH_NAMES[ym[5:7]]}</text>')
+    # y labels
+    ylabels = ""
+    for v in (hi, 0.0, lo):
+        ylabels += (f'<text x="{ml-6}" y="{y(v)+3:.1f}" font-size="9" fill="#999" '
+                    f'text-anchor="end">{v:+.0f}</text>')
+    return f"""<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:{W}px" role="img">
+      {ticks}
+      <line x1="{ml}" y1="{y0:.1f}" x2="{ml+pw}" y2="{y0:.1f}" stroke="#bbb" stroke-dasharray="3,3"/>
+      {ylabels}
+      {dots}
+      <polyline points="{roll_path}" fill="none" stroke="#c0392b" stroke-width="2"/>
+    </svg>"""
+
+
+def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[dict]) -> str:
     months = sorted(next(iter(results.values())).keys())
     cell_class = _cell_class
 
@@ -467,6 +553,27 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
     ov_start = max(BACKTEST_START, ABSENCE_START)
     ov_end   = min(BACKTEST_END, ABSENCE_END)
     proxied_days = (ov_end - ov_start).days + 1 if ov_start <= ov_end else 0
+
+    # Consumption prediction accuracy (drift monitor)
+    def _mean_resid(k: int) -> float:
+        tail = accuracy[-k:]
+        return sum(p["resid"] for p in tail) / len(tail) if tail else 0.0
+    acc_svg = _residual_svg(accuracy)
+    acc_14, acc_30, acc_90 = _mean_resid(14), _mean_resid(30), _mean_resid(90)
+    accuracy_section = f"""
+<div class="summary-section">
+  <h2>Consumption prediction accuracy <span style="font-size:0.8rem;font-weight:normal;color:#777">(drift monitor — residual = actual &minus; predicted, kWh)</span></h2>
+  <p style="font-size:0.85rem;color:#555;margin:0 0 0.5rem">
+    Mean residual &mdash; last 14 nights: <strong>{acc_14:+.2f}</strong> &nbsp;|&nbsp;
+    30: <strong>{acc_30:+.2f}</strong> &nbsp;|&nbsp; 90: <strong>{acc_90:+.2f}</strong> kWh
+  </p>
+  {acc_svg}
+  <p style="font-size:0.8rem;color:#666;margin:0.4rem 0 0">
+    Dots = each night&rsquo;s residual; <span style="color:#c0392b">red line</span> = 14-night rolling mean; dashed = zero.
+    Line drifting <strong>below</strong> zero ⇒ model increasingly over-predicts (conservative, e.g. reduced overnight heating).
+    Drifting <strong>above</strong> zero ⇒ under-predicts (less safety margin — a retrain trigger).
+  </p>
+</div>"""
 
     scenario_tables = []
     for key, label in SCENARIOS:
@@ -626,7 +733,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict) -> str:
     <tbody>{_recent_summary_rows(recent_30, "30-day", nights_warn=20)}</tbody>
   </table>
 </div>
-
+{accuracy_section}
 <div class="summary-section">
   <h2>Non-winter scenario summary <span style="font-size:0.8rem;font-weight:normal;color:#777">(Sep–May; winter Jun–Aug excluded — the model correctly idles in winter (≈zero export, zero shortfall), so its net capture is noisy/low-signal there, not loss-making. Monthly tables below still show winter.)</span></h2>
   <table>
@@ -787,7 +894,8 @@ def main() -> None:
         "I6": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=True, start=start_30),
     }
 
-    html = build_html(results, recent_14, recent_30)
+    accuracy = consumption_accuracy_series(rows, cfg)
+    html = build_html(results, recent_14, recent_30, accuracy)
     html_path = Path("tools/backtest_report.html")
     html_path.write_text(html, encoding="utf-8")
     print(f"Report written to {html_path}")
