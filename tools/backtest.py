@@ -624,7 +624,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
             <thead>
               <tr>
                 <th>Month</th><th>Nights</th><th>Revenue</th>
-                <th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture</th>
+                <th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture</th>
               </tr>
             </thead>
             <tbody>
@@ -718,7 +718,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
   <h2>Recent performance &mdash; last 14 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(small sample &mdash; treat as directional only)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture (n)</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
     </thead>
     <tbody>{_recent_summary_rows(recent_14, "14-day", nights_warn=14)}</tbody>
   </table>
@@ -728,7 +728,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
   <h2>Recent performance &mdash; last 30 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(moderately noisy)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture (n)</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
     </thead>
     <tbody>{_recent_summary_rows(recent_30, "30-day", nights_warn=20)}</tbody>
   </table>
@@ -738,7 +738,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
   <h2>Non-winter scenario summary <span style="font-size:0.8rem;font-weight:normal;color:#777">(Sep–May; winter Jun–Aug excluded — the model correctly idles in winter (≈zero export, zero shortfall), so its net capture is noisy/low-signal there, not loss-making. Monthly tables below still show winter.)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Perfect net</th><th>Net capture</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture</th></tr>
     </thead>
     <tbody>{''.join(summary_rows)}</tbody>
   </table>
@@ -754,8 +754,8 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
 
 <p class="note">
   <strong>Metric: SoC trough.</strong> Each night is judged against the actual overnight SoC trough (<code>min_soc_overnight</code>), reconstructed to a no-export baseline by adding back real peak exports (<code>evening_grid_export_wh</code>) and the full-charge adjustment. Exporting <code>E</code> lowers the trough by <code>E&divide;capacity</code>; a shortfall (grid buyback) is charged only for the part that pushes the trough below the <strong>hard floor</strong> (min SoC), and only the extra breach the export causes.<br>
-  <strong>Perfect net</strong> = what a hindsight-perfect model would earn: export down to the <strong>soft floor</strong> (min SoC + 10pt cushion) every night, zero shortfall. &ldquo;&mdash;&rdquo; net capture means there was no opportunity (perfect net &approx; 0), so the ratio is undefined.<br>
-  <strong>Net capture</strong> = net &divide; perfect net &mdash; what fraction of that best-possible outcome was achieved. Accounts for the rate asymmetry: shortfall costs $0.28/kWh to cover while missed export only foregoes $0.15/kWh, so aggressive-but-breaching strategies score lower than their raw revenue suggests.<br>
+  <strong>Safe net</strong> = what a hindsight-perfect <em>but cautious</em> model would earn: export down to the <strong>soft floor</strong> (min SoC + 10pt cushion) every night, zero shortfall. It is a conservative benchmark, not a maximum &mdash; it deliberately leaves the 10pt cushion unexported. A model that dips into that cushion on a night it turns out not to need it earns real revenue on energy safe net left in the battery, so <strong>Net and Net capture can exceed Safe net / 100%</strong>. That is the cushion being spent for extra return; on a night where consumption runs higher than predicted, the same aggression is what produces a hard-floor shortfall. &ldquo;&mdash;&rdquo; net capture means there was no opportunity (safe net &approx; 0), so the ratio is undefined.<br>
+  <strong>Net capture</strong> = net &divide; safe net &mdash; what fraction of that best-possible-yet-cautious outcome was achieved (over 100% means the model out-earned the cautious benchmark by spending the cushion, see above). Accounts for the rate asymmetry: shortfall costs $0.28/kWh to cover while missed export only foregoes $0.15/kWh, so aggressive-but-breaching strategies score lower than their raw revenue suggests.<br>
   <strong>Full-charge SoC</strong> = 6pm SoC adjusted upward by however short of 100% the prior day&rsquo;s peak fell, simulating GloBird overnight charging. Capacity and floor come from <code>config.yaml</code>.
 </p>
 </body>
