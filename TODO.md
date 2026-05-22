@@ -42,13 +42,28 @@
 
 ## Now: live test via Node-RED + observe
 
-- **Deploy:** re-import `tools/nodered-flow.json` into Node-RED (it now carries the
-  retrained coefficients, aligned confidence scales, and P50 default output). Eyeball the
-  first few nights' export vs actual SoC trough.
+- **Deployed 2026-05-22** — Node-RED flow live with retrained coefficients, aligned
+  confidence scales, and P50 default output. Running at P50 through winter (export
+  opportunity is minimal in winter anyway), observing behaviour.
 - **Deployment confidence is Open.** Backtest validated only a 14-day window so far (model
   exported with zero floor breaches; P50 best on net capture but full-period numbers are
   caveated by the full-charge assumption + in-sample baselines). Accumulate real nights
   before locking P50 vs P75.
+- **Observed:** over the 14 nights to 2026-05-21 the model ran ~0.9 kWh/night high on
+  consumption (conservative) and never breached the floor even on nights the user exported
+  above its P50 recommendation. Confirms the safe-but-conservative read.
+
+## Behaviour shift: AC now automated to save energy (future model consideration)
+
+The model is trained on history where heating ran longer overnight. The user now controls
+the AC via HA and has automated it to reduce overnight heating load, so **actual overnight
+consumption is structurally drifting below the training data** — the model will increasingly
+over-predict (extra conservatism). Not a problem now, but factor it in eventually:
+
+- Watch for a growing systematic over-prediction bias in heating-zone residuals.
+- A periodic retrain on recent data will partly absorb it, but a step-change in behaviour
+  (rather than gradual) may warrant weighting recent nights or a thermostat/HVAC-setpoint
+  feature (see the Sensibo HVAC open decision in DECISIONS.md).
 
 ## Add the SoC-minimum sensor to the dataset (future)
 
