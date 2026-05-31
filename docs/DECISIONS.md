@@ -446,6 +446,22 @@ Rates used: $0.15/kWh export, $0.28/kWh grid buyback. Absence period (Sep 28–N
 
 ---
 
+### The backtest is a model-quality benchmark, not a live-performance predictor (temp-source mismatch)
+
+**Decision:** Treat `tools/backtest.py` economics as a measure of how the model performs against **BOM-measured reality**, not as a prediction of what the **live** Node-RED deployment will earn. The two run the model on different temperature sources for the same window.
+**Status:** Open — the bias between the two sources is currently **unmeasurable** (see below).
+**Date:** 2026-05-31
+
+**Rationale:** The model's most important input is overnight mean temperature (it selects the zone and drives the heating-zone consumption regression). The backtest feeds the model the dataset's `bom_temp_mean` (BOM weather-station **actuals**). The live flow feeds it `sensor.overnight_forecast_temp_mean` — a template sensor that averages the **Truganina hourly _forecast_** over the same 6pm–11am window. Same window definition, **different source** (forecast vs actual, and a different provider than BOM). A systematic bias between them propagates directly into export decisions: if the forecast runs colder than BOM actuals, the live flow predicts higher consumption and exports **less** than the backtest implies (more conservative); warmer, and it exports **more** (less safe).
+
+This generalises the existing Solcast reasoning ("Solcast forecast is what the model will consume at inference time — including it in training data allows calibration of forecast vs actual", v1.1.0 decision) to **temperature**, where the same forecast-vs-actual gap was never closed.
+
+**Why unmeasurable today:** `sensor.overnight_forecast_temp_mean` was silently excluded from long-term `statistics` by a `recorder:` exclude glob until 2026-05-31 (see CLAUDE.md "Live-flow inputs"). There is therefore **no overlapping history** between the live forecast sensor and the dataset BOM temp. The bias cannot be quantified until enough post-fix nights accumulate.
+
+**Next step:** once the live forecast temp/humidity sensors have accumulated a few weeks of statistics, compare `overnight_forecast_temp_mean` against the dataset's `bom_temp_mean` on the same nights to quantify the bias, and decide whether the dataset/backtest should be reconciled to the forecast source (or the live flow fed BOM). Pairs naturally with the retrain review. Until then, do not cite backtest dollar figures as expected live earnings.
+
+---
+
 ### Backtest v2: actual-SoC scenarios dropped; baselines added; net capture metric introduced
 
 **Decision:** The backtest now evaluates only full-charge SoC scenarios (GloBird overnight charging assumed). Naive baselines are included for comparison. The efficiency column is replaced by "net capture" throughout.

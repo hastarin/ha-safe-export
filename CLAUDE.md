@@ -17,7 +17,7 @@ Phase 3 (Home Assistant integration) comes next. The dataset DB is the contract 
 - `docs/SPEC.md` — what we're predicting and the success criteria
 - `docs/DATASET.md` — **the canonical data spec.** Sensor mappings, window definitions, column formulas, validation samples
 - `docs/DECISIONS.md` — why each design choice was made (do not "improve" these without strong justification and discussion)
-- `docs/analysis/` — background analysis docs useful for modelling context: `ENERGY_ANALYSIS.md` (three-zone model selection rationale, statistical findings) and `PHASE_1_SCHEMA_UPDATE.md` (sensor coverage and schema evolution log)
+- `docs/analysis/` — background analysis docs useful for modelling context: `ENERGY_ANALYSIS.md` (three-zone model selection rationale, statistical findings), `PHASE_1_SCHEMA_UPDATE.md` (sensor coverage and schema evolution log), and `LIVE_INTEGRATION.md` (Phase 3 deployment surface: the five Node-RED model-input sensors, the `grid_export_*` execution chain, and the long-term-statistics recording requirement)
 
 ## Critical gotchas
 
@@ -51,6 +51,14 @@ On Fronius systems, `sensor.solar_power` includes battery discharge — not pure
 ### 5. Cumulative-sum sensors: use `sum`, not `state`
 
 The `state` column is the raw meter reading; `sum` is the HA-corrected cumulative value (handles meter resets). Always use `sum`. Window energy = `sum(end) − sum(start)`.
+
+### 6. The live flow depends on 5 sensors being in long-term `statistics` — verify before trusting any live audit
+
+The live Node-RED predictor (`tools/nodered-flow.json`) reads exactly **5 input sensors**: `overnight_forecast_temp_mean`, `overnight_forecast_humidity_mean`, `solcast_pv_forecast_forecast_tomorrow`, `byd…state_of_charge`, `byd…soc_minimum`. To reconstruct or backtest what the live system actually decided on a past night, **all five must be in long-term `statistics`** (the `states` table only retains ~8 days).
+
+As of an audit on 2026-05-31, **three were silently not being recorded** and had to be fixed in HA config: the two `overnight_forecast_*` sensors were blocked by a `recorder:` `exclude: entity_globs` rule, and `byd…soc_minimum` was provided by the Fronius integration with **no `state_class`** (making it ineligible for statistics; fixed via `customize:`). Do not assume a sensor is recorded just because it exists — check `statistics_meta` for it. A sensor that exists in `states` but not `statistics`, or that goes `unknown`/`unavailable` at the top of the hour, will leave gaps you cannot recover.
+
+**Also: the live temp input is a _forecast_ (Truganina hourly), not BOM.** The dataset's `bom_temp_mean` is BOM **actuals** over the same 6pm–11am window — a _different source_. Never substitute `bom_temp_mean` for the live flow input when reasoning about what the flow output; they can differ by several °C, which flips the export decision. See `docs/DECISIONS.md` ("model-quality benchmark, not a live-performance predictor") and `docs/analysis/LIVE_INTEGRATION.md`.
 
 ## Conventions
 
@@ -100,7 +108,8 @@ ha-safe-export/
 │   ├── DECISIONS.md
 │   └── analysis/
 │       ├── ENERGY_ANALYSIS.md       # zone model rationale and statistical findings
-│       └── PHASE_1_SCHEMA_UPDATE.md # sensor coverage and schema evolution log
+│       ├── PHASE_1_SCHEMA_UPDATE.md # sensor coverage and schema evolution log
+│       └── LIVE_INTEGRATION.md      # Phase 3 deployment surface; sensor recording requirement
 ├── src/
 │   ├── __init__.py      # defines __version__
 │   ├── config.py        # Config dataclass + load_config()

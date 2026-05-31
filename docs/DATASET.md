@@ -202,6 +202,8 @@ CREATE TABLE extraction_meta (
 All energy values are stored as **integer Wh**. Round to nearest whole Wh.
 SoC and temperature values are stored as **REAL** with 1 decimal place of precision.
 
+> **Temperature source ≠ the live flow's temperature source.** `bom_temp_mean` (and the other `bom_*` columns) are BOM weather-station **actuals**. The live Node-RED predictor does **not** read these — at inference time it reads `sensor.overnight_forecast_temp_mean`, a template sensor averaging the **Truganina hourly _forecast_** over the same 6pm–11am window. Same window definition, different source (forecast vs actual, different provider). They can differ by several °C, which is enough to change the model's zone and flip the export decision. Do not treat `bom_temp_mean` as a proxy for what the live flow saw. See `docs/DECISIONS.md` and `docs/analysis/LIVE_INTEGRATION.md`.
+
 ## Provider period logic
 
 Provider periods are configured in `config.yaml` as an ordered list. Each entry has a `name` and a `start_date`; the provider for any given row date is the last entry whose `start_date` ≤ that date.
