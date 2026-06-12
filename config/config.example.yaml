@@ -36,6 +36,11 @@ sensors:
   guests: null            # Number-of-guests sensor; stored for future model use; set to null if unused
   median_temp: null       # Multi-room median temperature; null if you only have one temp sensor
   median_humidity: null   # Multi-room median humidity; null if unavailable
+  # Live-flow overnight forecast inputs (the *forecast* counterparts to the BOM weather_*
+  # actuals). Read at the 6pm decision point and stored as forecast_temp_mean /
+  # forecast_humidity_mean. Must be in long-term statistics to be extractable.
+  forecast_temp: null     # e.g. "sensor.overnight_forecast_temp_mean"; null if unavailable
+  forecast_humidity: null # e.g. "sensor.overnight_forecast_humidity_mean"; null if unavailable
 
 providers:
   # List your energy providers in chronological order, earliest first.

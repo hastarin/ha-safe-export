@@ -31,6 +31,8 @@ FIXTURES: dict[str, dict] = {
         "bom_humidity_mean": 74.5,
         "bom_humidity_max": 84.0,
         "median_indoor_humidity": 50.5,
+        "forecast_temp_mean": None,      # before overnight_forecast_* recording (~May 2026)
+        "forecast_humidity_mean": None,
         "solar_wh_before_11am": 9612,
         "consumption_wh_load": 4949,
         "grid_import_wh": 24,
@@ -65,6 +67,8 @@ FIXTURES: dict[str, dict] = {
         "bom_humidity_mean": 77.8,
         "bom_humidity_max": 86.0,
         "median_indoor_humidity": 60.0,
+        "forecast_temp_mean": None,      # before overnight_forecast_* recording (~May 2026)
+        "forecast_humidity_mean": None,
         "solar_wh_before_11am": 2779,
         "consumption_wh_load": 6624,
         "grid_import_wh": 768,
@@ -99,6 +103,8 @@ FIXTURES: dict[str, dict] = {
         "bom_humidity_mean": 80.6,
         "bom_humidity_max": 90.0,
         "median_indoor_humidity": 49.8,
+        "forecast_temp_mean": None,      # before overnight_forecast_* recording (~May 2026)
+        "forecast_humidity_mean": None,
         "solar_wh_before_11am": 1007,
         "consumption_wh_load": 13040,
         "grid_import_wh": 6731,

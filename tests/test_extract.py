@@ -92,3 +92,50 @@ def test_fixture_row(dataset_db, date_str, expected):
             assert abs(got_val - exp_val) <= WH_TOL, (
                 f"{date_str} {col}: got {got_val}, expected {exp_val} (tol ±{WH_TOL} Wh)"
             )
+
+    # Forecast columns: all golden fixtures predate overnight_forecast_* recording,
+    # so both must be NULL. (A populated recent night is checked separately below.)
+    for col in ("forecast_temp_mean", "forecast_humidity_mean"):
+        if col in expected:
+            exp_val = expected[col]
+            got_val = row[col]
+            if exp_val is None:
+                assert got_val is None, f"{date_str} {col}: expected NULL, got {got_val}"
+            else:
+                assert abs(got_val - exp_val) <= REAL_TOL, (
+                    f"{date_str} {col}: got {got_val}, expected {exp_val} (tol ±{REAL_TOL})"
+                )
+
+
+# Recent nights where the overnight_forecast_* sensors were recording. Keyed by the
+# dataset's morning (11am-endpoint) date — so each row reads the forecast as it stood at
+# 6pm on the PRIOR evening, the same 6pm-prior→11am convention as bom_temp_mean. Values
+# read directly from the HA long-term statistics during scoping (metadata_id 760/761).
+# Tolerance is the standard ±0.1 °C/%. These are the spot-check candidates — verify the
+# *prior evening's* 6pm forecast against the HA dashboard history.
+RECENT_FORECAST = {
+    # morning date -> (reads 6pm of, forecast_temp_mean, forecast_humidity_mean)
+    "2026-06-10": {"reads_6pm_of": "2026-06-09",
+                   "forecast_temp_mean": 13.4, "forecast_humidity_mean": 85.7},
+    "2026-06-11": {"reads_6pm_of": "2026-06-10",
+                   "forecast_temp_mean": 11.3, "forecast_humidity_mean": 94.7},
+}
+
+
+@pytest.mark.parametrize("date_str,expected", list(RECENT_FORECAST.items()))
+def test_forecast_recent_night(dataset_db, date_str, expected):
+    with sqlite3.connect(dataset_db) as con:
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            "SELECT forecast_temp_mean, forecast_humidity_mean "
+            "FROM daily_observations WHERE date = ?",
+            (date_str,),
+        ).fetchone()
+    assert row is not None, f"No row found for {date_str}"
+    for col in ("forecast_temp_mean", "forecast_humidity_mean"):
+        got = row[col]
+        exp = expected[col]
+        assert got is not None, f"{date_str} {col}: expected {exp}, got NULL"
+        assert abs(got - exp) <= REAL_TOL, (
+            f"{date_str} {col}: got {got}, expected {exp} (tol ±{REAL_TOL})"
+        )

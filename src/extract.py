@@ -15,7 +15,17 @@ log = logging.getLogger(__name__)
 
 FIRST_DATE = date(2023, 11, 28)
 
-_OPTIONAL_SENSORS = {"guests", "solcast", "median_temp", "median_humidity"}
+_OPTIONAL_SENSORS = {
+    "guests", "solcast", "median_temp", "median_humidity",
+    "forecast_temp", "forecast_humidity",
+}
+
+# How far before the 6pm decision point we'll accept a stale forecast value when the
+# exact 18:00-local bucket is missing. The overnight_forecast_* template sensors update
+# through the day; the live flow reads them at 6pm. If the 6pm row is absent we fall back
+# to the most recent prior bucket within this window, so a missed top-of-hour sample is
+# tolerated but a stale afternoon forecast never masquerades as the evening decision input.
+_FORECAST_FALLBACK_SECONDS = 3 * 3600
 
 # Thresholds for data-gap warning heuristics
 _IMBALANCE_WARN_THRESHOLD = 3000
@@ -60,6 +70,40 @@ def _cum_delta(
     if start_val is None or end_val is None:
         return None
     return round(end_val - start_val)
+
+
+def _forecast_at_6pm(
+    ha: sqlite3.Connection, mid: int | None, ts_18_local: int
+) -> float | None:
+    """Return the overnight-forecast value as it stood at 6pm local (the decision point).
+
+    The overnight_forecast_* template sensors publish a single value per update that is
+    already the mean over the 6pm–11am window, so we read the *point value* at the 6pm
+    decision time, not a window aggregate. ts_18_local is the bucket labeled 18:00 local
+    (HA buckets are start-labeled, so this bucket *is* the 6pm reading). If it's missing,
+    fall back to the most recent earlier bucket within _FORECAST_FALLBACK_SECONDS.
+
+    Returns None if the sensor is absent or no value exists within the fallback window.
+    """
+    if mid is None:
+        return None
+    row = ha.execute(
+        "SELECT mean FROM statistics WHERE metadata_id = ? AND start_ts = ?",
+        (mid, ts_18_local),
+    ).fetchone()
+    if row and row[0] is not None:
+        return round(row[0], 1)
+    row = ha.execute(
+        """
+        SELECT mean FROM statistics
+        WHERE metadata_id = ? AND start_ts < ? AND start_ts >= ? AND mean IS NOT NULL
+        ORDER BY start_ts DESC LIMIT 1
+        """,
+        (mid, ts_18_local, ts_18_local - _FORECAST_FALLBACK_SECONDS),
+    ).fetchone()
+    if row and row[0] is not None:
+        return round(row[0], 1)
+    return None
 
 
 def extract_row(
@@ -178,6 +222,13 @@ def extract_row(
     if ids["median_humidity"] is not None:
         median_indoor_humidity = _r1("AVG(mean)", "median_humidity")
 
+    # Live-flow forecast inputs, read at the 6pm decision point (bucket labeled 18:00
+    # local). These are the *forecast* counterparts to bom_temp_mean/bom_humidity_mean
+    # (which are BOM actuals over the same window) — never substitute one for the other.
+    # NULL before the overnight_forecast_* sensors began recording to long-term stats.
+    forecast_temp_mean = _forecast_at_6pm(ha, ids["forecast_temp"], w.ts_18_prior)
+    forecast_humidity_mean = _forecast_at_6pm(ha, ids["forecast_humidity"], w.ts_18_prior)
+
     guests: int | None = None
     if ids["guests"] is not None and cfg.sensors.guests is not None:
         row = ha.execute(
@@ -223,6 +274,8 @@ def extract_row(
         "bom_humidity_mean": bom_humidity_mean,
         "bom_humidity_max": bom_humidity_max,
         "median_indoor_humidity": median_indoor_humidity,
+        "forecast_temp_mean": forecast_temp_mean,
+        "forecast_humidity_mean": forecast_humidity_mean,
         "solar_wh_before_11am": solar_wh,
         "consumption_wh": consumption_wh,
         "consumption_wh_load": consumption_wh_load,
@@ -340,6 +393,7 @@ def extract_all(
                 bom_wind_mean, bom_gust_max, solcast_forecast_tomorrow_wh,
                 median_indoor_temp, bom_temp_max, bom_temp_afternoon_max,
                 bom_humidity_mean, bom_humidity_max, median_indoor_humidity,
+                forecast_temp_mean, forecast_humidity_mean,
                 solar_wh_before_11am, consumption_wh, consumption_wh_load,
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
                 evening_grid_export_wh,
@@ -352,6 +406,7 @@ def extract_all(
                 :bom_wind_mean, :bom_gust_max, :solcast_forecast_tomorrow_wh,
                 :median_indoor_temp, :bom_temp_max, :bom_temp_afternoon_max,
                 :bom_humidity_mean, :bom_humidity_max, :median_indoor_humidity,
+                :forecast_temp_mean, :forecast_humidity_mean,
                 :solar_wh_before_11am, :consumption_wh, :consumption_wh_load,
                 :grid_import_wh, :grid_export_wh, :battery_charged_wh, :battery_discharged_wh,
                 :evening_grid_export_wh,
@@ -376,7 +431,7 @@ def extract_all(
         (p.start_date.isoformat() for p in cfg.providers if p.name == "globird"), ""
     )
     for key, value in [
-        ("schema_version", "1.5.0"),
+        ("schema_version", "1.6.0"),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
         ("globird_start_date", globird_start),

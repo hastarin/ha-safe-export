@@ -8,9 +8,9 @@ Installation-specific configuration (battery capacity, sensor names, provider hi
 
 ## Current phase
 
-**Phase 2: Modelling — complete.** Phase 1 (data extraction) is complete at schema v1.4.0. Phase 2 is complete — `src/model.py` implements a four-zone predictor with a `predict()` function. Economic backtesting is done (`tools/backtest.py`); deployment is deferred to September 2026.
+**Phase 3: Home Assistant integration — underway.** Phase 1 (data extraction) and Phase 2 (modelling, `src/model.py` four-zone predictor + `predict()`, economic backtest in `tools/backtest.py`) are both complete. The dataset is at **schema v1.6.0** — Phase 3 work has begun adding the live-flow forecast inputs (`forecast_temp_mean`/`forecast_humidity_mean`, v1.5.0 → v1.6.0) so the dataset can eventually be scored on the same forecast the live flow decides on. Full deployment is deferred to September 2026.
 
-Phase 3 (Home Assistant integration) comes next. The dataset DB is the contract between Phase 1 and Phase 2; the trained model + `predict()` function is the contract between Phase 2 and Phase 3.
+The dataset DB is the contract between Phase 1 and Phase 2; the trained model + `predict()` function is the contract between Phase 2 and Phase 3.
 
 ## Read these before writing code
 
@@ -117,11 +117,15 @@ ha-safe-export/
 │   ├── schema.sql       # canonical DDL for the dataset DB
 │   ├── model.py         # four-zone predictor + predict()
 │   ├── windows.py       # timezone-aware window math
-│   └── migrations/      # incremental schema updates (applied automatically on startup)
-│       ├── 001_add_weather_forecast.sql   # v1.0.0 → v1.1.0
-│       ├── 002_add_humidity.sql           # v1.1.0 → v1.2.0
-│       ├── 003_add_data_gap.sql           # v1.2.0 → v1.3.0
-│       └── 004_add_afternoon_temp.sql     # v1.3.0 → v1.4.0
+│   └── migrations/      # historical record of schema changes — NOT auto-applied.
+│       │                #   schema.sql is the source of truth; --rebuild recreates from it.
+│       │                #   These are kept for hand-upgrading an existing old DB in place.
+│       ├── 001_add_weather_forecast.sql    # v1.0.0 → v1.1.0
+│       ├── 002_add_humidity.sql            # v1.1.0 → v1.2.0
+│       ├── 003_add_data_gap.sql            # v1.2.0 → v1.3.0
+│       ├── 004_add_afternoon_temp.sql      # v1.3.0 → v1.4.0
+│       ├── 005_add_evening_grid_export.sql # v1.4.0 → v1.5.0
+│       └── 006_add_forecast_inputs.sql     # v1.5.0 → v1.6.0
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py      # shared test fixtures (test Config)

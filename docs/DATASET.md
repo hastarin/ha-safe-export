@@ -101,6 +101,31 @@ NULL for rows before 2024-01-08.
 
 NULL for rows before 2024-01-08.
 
+### Overnight forecast inputs (live-flow counterparts)
+
+| Purpose                  | Sensor                                  | Native unit | Method                       | Available from |
+| ------------------------ | --------------------------------------- | ----------- | ---------------------------- | -------------- |
+| Forecast overnight temp  | `sensor.overnight_forecast_temp_mean`   | °C          | point value at 6pm local     | ~2026-06-01    |
+| Forecast overnight humid | `sensor.overnight_forecast_humidity_mean` | %         | point value at 6pm local     | ~2026-06-01    |
+
+These are the **forecast** counterparts to `bom_temp_mean` / `bom_humidity_mean` (which are
+BOM **actuals** over the 6pm–11am window). They are the actual inputs the live Node-RED flow
+reads at 6pm to make the export decision — a Truganina hourly forecast averaged over the same
+6pm–11am window by an HA template sensor. **The two sources can differ by several °C and flip
+the export decision — never substitute one for the other** (see CLAUDE.md gotcha #6 and
+`docs/analysis/LIVE_INTEGRATION.md`).
+
+Read mechanics: the value is taken from the statistics bucket labeled **18:00 local on the
+prior day** (the 6pm decision point, matching the `bom_temp_mean` window convention — each row
+is keyed by its 11am-endpoint morning date). If that exact bucket is missing, extraction falls
+back to the most recent earlier bucket within **3 hours** (no older than 15:00 local); beyond
+that the column is `NULL`. NULL for all rows before the `overnight_forecast_*` sensors began
+recording to long-term statistics (the recorder/`state_class` fixes landed in the 2026-05-31
+audit; the first cleanly-readable prior-evening value is for the morning of 2026-06-01).
+
+Extraction is **forecast-only** — the economic backtest still scores on `bom_temp_mean`. A
+forecast-scored backtest scenario is deferred to the next retrain, once more nights accumulate.
+
 For sensors only available from a later date, the corresponding column is `NULL` for earlier rows (do not zero-fill).
 
 ## Output schema
@@ -136,6 +161,8 @@ CREATE TABLE daily_observations (
     bom_humidity_mean REAL,                 -- %, AVG(mean) over 6pm–11am window
     bom_humidity_max REAL,                  -- %, MAX(max) over 6pm–11am window
     median_indoor_humidity REAL,            -- %, AVG(mean) over 6pm–11am window; NULL before Jan 2024
+    forecast_temp_mean REAL,                -- °C, forecast at 6pm local (prior eve); NULL before ~Jun 2026
+    forecast_humidity_mean REAL,            -- %, forecast at 6pm local (prior eve); NULL before ~Jun 2026
 
     solar_wh_before_11am INTEGER,           -- Wh
     consumption_wh INTEGER,                 -- Wh, balance-derived (primary)
@@ -188,6 +215,8 @@ CREATE TABLE extraction_meta (
 | `bom_humidity_mean`            | `AVG(weather_humidity.mean)` over the window                                                                                                           |
 | `bom_humidity_max`             | `MAX(weather_humidity.max)` over the window                                                                                                            |
 | `median_indoor_humidity`       | `AVG(median_humidity.mean)` over the window. **NULL** before 2024-01-08.                                                                               |
+| `forecast_temp_mean`           | `overnight_forecast_temp_mean.mean` at the 18:00-local prior-day bucket (3h fallback). Forecast, not actuals. **NULL** before ~2026-06-01.             |
+| `forecast_humidity_mean`       | `overnight_forecast_humidity_mean.mean` at the 18:00-local prior-day bucket (3h fallback). Forecast, not actuals. **NULL** before ~2026-06-01.         |
 | `solar_wh_before_11am`         | `SUM(MAX(pv.mean, 0))` over buckets in window (Wh; mean x 1h)                                                                                          |
 | `consumption_wh_load`          | `SUM(ABS(load.mean))` over buckets in window (Wh) — QA only                                                                                            |
 | `grid_import_wh`               | `consumed.sum @ 10:00 row date − consumed.sum @ 17:00 prior` (reads cumulative at 11:00 minus 18:00)                                                   |

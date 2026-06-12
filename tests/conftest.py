@@ -35,6 +35,8 @@ def test_cfg() -> Config:
             guests="sensor.hastguests",
             median_temp="sensor.median_temperature",
             median_humidity="sensor.median_humidity",
+            forecast_temp="sensor.overnight_forecast_temp_mean",
+            forecast_humidity="sensor.overnight_forecast_humidity_mean",
         ),
         providers=[
             ProviderPeriod(name="ea", start_date=date(2023, 11, 28)),

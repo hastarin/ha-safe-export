@@ -43,6 +43,8 @@ class SensorConfig:
     guests: str | None = None
     median_temp: str | None = None
     median_humidity: str | None = None
+    forecast_temp: str | None = None
+    forecast_humidity: str | None = None
 
 
 @dataclass
@@ -119,6 +121,8 @@ class Config:
             "median_temp": s.median_temp,
             "weather_humidity": s.weather_humidity,
             "median_humidity": s.median_humidity,
+            "forecast_temp": s.forecast_temp,
+            "forecast_humidity": s.forecast_humidity,
         }
 
 
@@ -153,6 +157,8 @@ def load_config(path: Path) -> Config:
         guests=s.get("guests") or None,
         median_temp=s.get("median_temp") or None,
         median_humidity=s.get("median_humidity") or None,
+        forecast_temp=s.get("forecast_temp") or None,
+        forecast_humidity=s.get("forecast_humidity") or None,
     )
 
     providers = [
