@@ -103,10 +103,10 @@ NULL for rows before 2024-01-08.
 
 ### Overnight forecast inputs (live-flow counterparts)
 
-| Purpose                  | Sensor                                  | Native unit | Method                       | Available from |
-| ------------------------ | --------------------------------------- | ----------- | ---------------------------- | -------------- |
-| Forecast overnight temp  | `sensor.overnight_forecast_temp_mean`   | °C          | point value at 6pm local     | ~2026-06-01    |
-| Forecast overnight humid | `sensor.overnight_forecast_humidity_mean` | %         | point value at 6pm local     | ~2026-06-01    |
+| Purpose                  | Sensor                                    | Native unit | Method                   | Available from |
+| ------------------------ | ----------------------------------------- | ----------- | ------------------------ | -------------- |
+| Forecast overnight temp  | `sensor.overnight_forecast_temp_mean`     | °C          | point value at 6pm local | ~2026-06-01    |
+| Forecast overnight humid | `sensor.overnight_forecast_humidity_mean` | %           | point value at 6pm local | ~2026-06-01    |
 
 These are the **forecast** counterparts to `bom_temp_mean` / `bom_humidity_mean` (which are
 BOM **actuals** over the 6pm–11am window). They are the actual inputs the live Node-RED flow
