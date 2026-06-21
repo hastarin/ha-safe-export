@@ -40,6 +40,32 @@
 - **Node-RED default output switched P90 → P50.** **Re-import the flow into Node-RED to
   deploy.** Deployment confidence stays Open (see DECISIONS.md) — P50 is a live test.
 
+## Retrain review 2026-06-21 — HELD (no coefficient change)
+
+Ran `tools/retrain.py` against the dataset re-extracted through **2026-06-20** (930 rows;
+30 post-regime-change nights since 2026-05-22, 20 forecast-input nights). Decision: **do
+not retrain / do not change coefficients.** Reasons:
+
+- **Plain full-pool refit (888 nights) is near-identical to live.** Cooling/mild byte-equal;
+  warm moved by hundredths; heating buffer 2.649→2.588. Only real move was
+  `heating_b_solcast` −0.0162→−0.0095, which pushes *more* conservative, not less. The
+  ~30 post-change nights are diluted in 2.5 years of history.
+- **Measured heating-zone drift is small, stable, and safe-side.** Over the 29 post-change
+  heating nights the *current live* model over-predicts by **mean −0.72 / median −0.69
+  kWh/night** (actual below pred 23/29). This is far below the −1.3→−4.8 kWh the 2026-05-31
+  note feared, and it is **not steepening** across June (late-May nights drove the earlier
+  alarm). The **P50 floor held 29/29 nights** (actual under the P50 budget every night).
+- **Stakes are tiny** (~$6/month of winter conservatism at $0.15/kWh) and a recency-weighted
+  refit to shave the 0.7 kWh would *narrow* the margin that just held 29/29 — wrong-way risk
+  on cold snaps (e.g. 2026-06-15 at −6°C, actual +0.7 over pred).
+- **Forecast-scored backtest scenario + I6-vs-P50 re-eval deferred again** — they only matter
+  once coefficients change and once export value is non-trivial. Revisit alongside the
+  spring/summer review when export $ actually matter (and cooling has a 2nd summer).
+- Held-out validation still passes (heating 0.8% / cooling 0.0% violation, target ≤5%).
+
+**Next review: spring 2026 (Sep, the deployment target)** — when export value rises, re-extract,
+re-measure drift (incl. any cooling-zone shift), and decide retrain then. Nothing to redeploy now.
+
 ## Now: live test via Node-RED + observe
 
 - **Deployed 2026-05-22** — Node-RED flow live with retrained coefficients, aligned

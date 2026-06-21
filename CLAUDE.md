@@ -70,6 +70,7 @@ As of an audit on 2026-05-31, **three were silently not being recorded** and had
 - Connect to the HA DB read-only: `sqlite3.connect(f"file:{path}?mode=ro", uri=True)`
 - The dataset DB is the project's own SQLite file, separate from the HA DB
 - Don't waste time/tokens trying to fix lint errors on markdown files, ask the user to fix them
+- Windows console is cp1252: a script that `print()`s non-ASCII (e.g. the `α` in a backtest scenario label) raises `UnicodeEncodeError`. The project tools write UTF-8 files fine — this only bites ad-hoc scripts printing to the terminal. Prefix such runs with `PYTHONIOENCODING=utf-8` (the dev box also sets this as a user env var, but don't rely on that being present)
 
 ## Testing
 
