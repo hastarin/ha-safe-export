@@ -63,10 +63,11 @@ data_gap_dates:
   # - "2024-03-15"
 
 model:
-  # Linear regression coefficients. Update these after each retraining run.
-  # The values below are placeholders — replace with your fitted coefficients.
+  # Four-zone model coefficients (zone bands: 17/19/21 °C on forecast overnight mean temp).
+  # The values below are placeholders — replace with your own fitted coefficients from
+  # `python -m tools.retrain` after your dataset is extracted.
   #
-  # Heating zone (overnight mean temp < 19°C):
+  # Heating zone (overnight mean temp < 17°C):
   #   consumption_kwh = heating_intercept + heating_b_temp * temp + heating_b_solcast * solcast_kwh
   heating_intercept: 19.7258
   heating_b_temp: -0.7756
@@ -87,11 +88,19 @@ model:
   cooling_temp_only_intercept: -6.756
   cooling_temp_only_b_temp: 0.660
 
-  # Mild zone (19°C ≤ temp ≤ 21°C): empirical percentile table (kWh)
+  # Mild zone (19°C < temp ≤ 21°C): empirical percentile table (kWh).
+  # No weather signal predicts consumption in this band; the table is fitted percentiles
+  # of observed overnight consumption.
   mild_p50: 4.601
   mild_p75: 6.583
   mild_p90: 7.829
   mild_p95: 8.425
+
+  # Warm boundary zone (17°C ≤ temp < 19°C): empirical percentile table (kWh), same idea.
+  warm_boundary_p50: 4.76
+  warm_boundary_p75: 6.00
+  warm_boundary_p90: 6.99
+  warm_boundary_p95: 8.05
 
   # P95 absolute residual buffers (kWh) — covers ~92% of held-out test errors
   heating_p95_buffer_kwh: 3.562
