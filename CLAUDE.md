@@ -176,6 +176,8 @@ The four-zone model is implemented **three times**. Any change to coefficients, 
 
 Retrain with `tools/retrain.py` (needs the `tools` extra — `pip install -e ".[tools]"`, numpy), review, then update `config.yaml`, `tests/conftest.py`, `predictor.html`, and `nodered-flow.json` together.
 
+Sync between `config.yaml`/`tests/conftest.py`, `nodered-flow.json`, and the `model.py` confidence ladder is enforced by `tests/test_sync.py`.
+
 **Redeploy after editing these:** changing `nodered-flow.json` or `predictor.html` in the repo does NOT update what is running. You must re-import the flow into Node-RED (and reload the HTML) for changes to take effect.
 
 `tools/nodered-flow.json` is intended to **faithfully mirror `src/model.py`** — it is the low-cost stand-in for the eventual Home Assistant integration, so it should reproduce the canonical model exactly (coefficients, percentile tables, buffers, and the confidence buffer-scale ladder `{0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}`). Do not let it drift into its own operating policy; if behaviour needs to change, change `model.py` and propagate.
