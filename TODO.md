@@ -12,7 +12,7 @@
 - **Model retrained — DONE.** `tools/retrain.py` (new; needs the `tools` numpy extra)
   refit all four zones on 858 trainable nights, held-out validation (every 5th night).
   New coefficients/percentiles/buffers in `config.yaml`, `tests/conftest.py`,
-  `tools/predictor.html`, `tools/nodered-flow.json`. Heating R² 0.77→0.83, cooling
+  `tools/nodered-flow.json`. Heating R² 0.77→0.83, cooling
   0.37→0.52; P95 buffers shrank (heating 3.562→2.649, cooling 3.136→2.431); held-out
   violation 0.8% heating / 0.0% cooling. `confidence_scale` in `model.py` recomputed
   (negligible drift). See CHANGELOG and the DECISIONS.md retrain/band-review entries.
@@ -20,9 +20,9 @@
   the minimum sits in the warm band (17–19°C) and 19–21°C ("mild") is the low-cooling
   shoulder — so mild > warm is correct, not a bug. Misnomer documented in code +
   DECISIONS.md. Bands unchanged.
-- **Three-copy sync rule documented** in CLAUDE.md (model.py/config.yaml,
-  predictor.html, nodered-flow.json must stay in sync; redeploy required for the
-  Node-RED flow and HTML to take effect).
+- **Two-copy sync rule documented** in CLAUDE.md (model.py/config.yaml,
+  nodered-flow.json must stay in sync; redeploy required for the Node-RED flow
+  to take effect).
 - **P50 divergence fixed.** The Node-RED flow's confidence buffer-scale ladder now
   matches model.py exactly (`{0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}`;
   previously P50=0.00, P90=0.87). The flow is intended to faithfully mirror the
