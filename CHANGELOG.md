@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`tests/test_sync.py`** — coefficient-parity test guarding against drift between the hand-copied coefficient sets: `tools/nodered-flow.json`'s "Four-zone model" function node vs `tests/conftest.py`'s `test_cfg` fixture, the ladder in `tools/nodered-flow.json` vs `CONFIDENCE_SCALE` in `src/model.py`, and (when `config/config.yaml` exists locally) `test_cfg` vs the real config. Fails with a message naming the drifted key on any digit mismatch; skips cleanly where `config.yaml` is absent (CI/forks).
 - **CI workflow** (`.github/workflows/ci.yml`): runs `ruff check .` and `pytest` on every push to `main` and on pull requests (Python 3.11, `ubuntu-latest`). Extraction fixture tests and other tests requiring gitignored personal data skip cleanly in this environment rather than failing.
 - CI status badge in `README.md`.
+- **`tests/test_backtest.py`** — hand-computed unit coverage for `tools/backtest.py`'s pure economics functions (`season`, `seasonal_confidence`, `one_year_before`, `adjusted_soc`, `baseline_trough_soc`, `accum_night`, `_capture`), including the export-caused-breach and already-breached-baseline shortfall-attribution cases. Closes audit finding T4 (issue #8). Tests pin `BATTERY_WH`/`HARD_FLOOR_FRAC`/`SOFT_FLOOR_FRAC`/`EXPORT_RATE`/`BUYBACK_RATE` via monkeypatch rather than relying on module defaults, since `main()` mutates the first three from `config.yaml`.
 
 ## [1.6.0] — 2026-07-03
 
