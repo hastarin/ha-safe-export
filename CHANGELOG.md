@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - **`load_config` raises `ValueError` on missing required fields, instead of a raw `KeyError`.** Every required key in the `battery`, `sensors`, and `model` sections, plus the top-level `timezone` and `providers` keys, now goes through a small `_require`/`_require_section` helper that raises `ValueError(f"{path}: missing required key {section}.{key}")` (or `missing required section {key}` for an absent block), naming the config file and the dotted key path. Optional keys (`solcast`, `guests`, `median_*`, `forecast_*`, `absence_periods`, `data_gap_dates`) are unaffected. Makes the `load_config` docstring's existing claim ("Raises ValueError on missing required fields") true. New tests cover a missing scalar key, a missing section, and the existing valid-example-config control case.
+- **`extract.py`'s incremental extraction boundary used the machine-local clock instead of the configured timezone.** `yesterday = date.today() - timedelta(days=1)` in `extract_all` computed the extraction upper bound from the host's local date rather than `cfg.timezone`, an inconsistency with the project's otherwise strict timezone discipline. Harmless on a Melbourne-local box; would extract an incomplete window or lag a day if run on a UTC machine (e.g. a container). Replaced with `datetime.now(cfg.timezone).date() - timedelta(days=1)`.
 
 ### Added
 
@@ -15,10 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **CI workflow** (`.github/workflows/ci.yml`): runs `ruff check .` and `pytest` on every push to `main` and on pull requests (Python 3.11, `ubuntu-latest`). Extraction fixture tests and other tests requiring gitignored personal data skip cleanly in this environment rather than failing.
 - CI status badge in `README.md`.
 - **`tests/test_backtest.py`** — hand-computed unit coverage for `tools/backtest.py`'s pure economics functions (`season`, `seasonal_confidence`, `one_year_before`, `adjusted_soc`, `baseline_trough_soc`, `accum_night`, `_capture`), including the export-caused-breach and already-breached-baseline shortfall-attribution cases. Closes audit finding T4 (issue #8). Tests pin `BATTERY_WH`/`HARD_FLOOR_FRAC`/`SOFT_FLOOR_FRAC`/`EXPORT_RATE`/`BUYBACK_RATE` via monkeypatch rather than relying on module defaults, since `main()` mutates the first three from `config.yaml`.
-
-### Fixed
-
-- **`extract.py`'s incremental extraction boundary used the machine-local clock instead of the configured timezone.** `yesterday = date.today() - timedelta(days=1)` in `extract_all` computed the extraction upper bound from the host's local date rather than `cfg.timezone`, an inconsistency with the project's otherwise strict timezone discipline. Harmless on a Melbourne-local box; would extract an incomplete window or lag a day if run on a UTC machine (e.g. a container). Replaced with `datetime.now(cfg.timezone).date() - timedelta(days=1)`.
+- **`tests/test_windows.py`** — unit tests for `src/windows.py`'s DST handling (Australia/Melbourne): a normal winter (AEST) and summer (AEDT) date, spring-forward (2025-10-05, 15-hour window) and fall-back (2026-04-05, 17-hour window), ordering invariants, and an assertion that the boundary hours never coincide with the 02:00-03:00 transition window. Expected timestamps are computed with a fixed-offset `datetime.timezone`, independent of the `zoneinfo` path under test.
 
 ## [1.6.0] — 2026-07-03
 
