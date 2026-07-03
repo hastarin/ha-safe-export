@@ -1,5 +1,7 @@
 # ha-safe-export
 
+[![CI](https://github.com/hastarin/ha-safe-export/actions/workflows/ci.yml/badge.svg)](https://github.com/hastarin/ha-safe-export/actions/workflows/ci.yml)
+
 Predict the maximum amount of energy that can be safely exported from a home battery during the evening peak, without leaving the home short before solar recovers the next morning.
 
 > **Status:** Phase 2 (modelling) — data extraction complete; prediction model built and tested.

@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+
+- **CI workflow** (`.github/workflows/ci.yml`): runs `ruff check .` and `pytest` on every push to `main` and on pull requests (Python 3.11, `ubuntu-latest`). Extraction fixture tests and other tests requiring gitignored personal data skip cleanly in this environment rather than failing.
+- CI status badge in `README.md`.
+
 ## [1.6.0] — 2026-07-03
 
 Version alignment release: `__version__` and the package version now both track the dataset schema version (1.6.0), and `pyproject.toml` reads the version dynamically from `src/__init__.py`.
