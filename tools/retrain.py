@@ -25,6 +25,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from src.model import CONFIDENCE_SCALE
+
 DB_PATH = "data/dataset.db"
 
 # Zone boundaries on bom_temp_mean (must match src/model.py exactly).
@@ -269,7 +271,8 @@ model:
     print("=" * 70)
     rp = heat["resid_pctls"]
     p95 = rp["p95"]
-    print("  current src/model.py: {0.50: 0.31, 0.75: 0.58, 0.90: 0.87, 0.95: 1.00}")
+    current = ", ".join(f"{k:.2f}: {v:.2f}" for k, v in sorted(CONFIDENCE_SCALE.items()))
+    print(f"  current src/model.py: {{{current}}}")
     print(f"  recomputed:           {{0.50: {rp['p50']/p95:.2f}, 0.75: {rp['p75']/p95:.2f}, "
           f"0.90: {rp['p90']/p95:.2f}, 0.95: 1.00}}")
 

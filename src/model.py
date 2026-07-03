@@ -97,6 +97,13 @@ class PredictResult:
     """Human-readable explanation of the recommendation."""
 
 
+# Ratios of P50/P75/P90 to P95 of heating-zone |residual| (recomputed 2026-05-22
+# from the post-fix dataset; drift from prior was negligible). Mirrored in the
+# Node-RED flow's CONF ladder — keep in sync (see CLAUDE.md). tools/retrain.py
+# imports this to report drift against freshly recomputed ratios.
+CONFIDENCE_SCALE: dict[float, float] = {0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -183,10 +190,7 @@ def predict(inputs: PredictInputs, cfg: Config) -> PredictResult:
         buffer_kwh = 0.0
     else:
         consumption_estimate_kwh = point_kwh
-        # Ratios of P50/P75/P90 to P95 of heating-zone |residual| (recomputed
-        # 2026-05-22 from the post-fix dataset; drift from prior was negligible).
-        confidence_scale = {0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}
-        scale = min(confidence_scale.items(), key=lambda kv: abs(kv[0] - inputs.confidence))[1]
+        scale = min(CONFIDENCE_SCALE.items(), key=lambda kv: abs(kv[0] - inputs.confidence))[1]
         buffer_kwh = p95_buffer_kwh * scale
 
     predicted_consumption_wh = consumption_estimate_kwh * 1000.0
