@@ -10,10 +10,11 @@ Model scenarios:
 Baseline scenarios (bypass model — use consumption estimate directly):
   C) 3-day rolling average consumption
   D) 7-day rolling average consumption
-  E) Seasonal fixed median (Winter 12163 Wh / Shoulder 6481 Wh / Summer 5859 Wh)
+  E) Seasonal fixed median (dataset medians, computed at runtime)
 
-Absence period nights use same calendar date one year prior.
-Rates: export $0.15/kWh, grid buyback $0.28/kWh
+Absence periods (config.yaml's absence_periods) proxy each night to the same
+calendar date one year prior. Rates (export / grid buyback) come from
+config.yaml's backtest section.
 Output: HTML report.
 """
 
@@ -22,13 +23,14 @@ import sqlite3
 from collections import deque
 from datetime import date, timedelta
 from pathlib import Path
+from statistics import median
 
-from src.config import load_config
+from src.config import Config, load_config
 from src.model import PredictInputs, predict
 
 DB_PATH = "data/dataset.db"
-EXPORT_RATE  = 0.15   # $/kWh
-BUYBACK_RATE = 0.28   # $/kWh
+EXPORT_RATE  = 0.15   # $/kWh; default, main() overrides from config.yaml's backtest section
+BUYBACK_RATE = 0.28   # $/kWh; default, main() overrides from config.yaml's backtest section
 
 # Defaults; main() overrides BATTERY_WH / HARD_FLOOR_FRAC / SOFT_FLOOR_FRAC from
 # config.yaml (battery_capacity_wh, battery_reserve_fraction) so the evaluation
@@ -38,20 +40,11 @@ HARD_FLOOR_FRAC   = 0.10      # grid-discharge floor; breaching it = grid buybac
 SOFT_FLOOR_MARGIN = 0.10      # 'perfect' export leaves this cushion above the hard floor
 SOFT_FLOOR_FRAC   = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN  # 0.20
 
-ABSENCE_START  = date(2025, 9, 28)
-ABSENCE_END    = date(2025, 11, 3)
 # Defaults; main() overrides these to a rolling 12 months anchored to the dataset's
 # last date (BACKTEST_END = last available date, BACKTEST_START = one year prior), so
 # the window doesn't creep as more days are extracted.
 BACKTEST_START = date(2025, 5, 11)
 BACKTEST_END   = date(2026, 5, 20)
-
-# Seasonal medians from dataset (consumption_wh, data-gap rows excluded)
-SEASONAL_FIXED_WH = {
-    "winter":   12163,
-    "shoulder":  6481,
-    "summer":    5859,
-}
 
 
 def season(d: date) -> str:
@@ -97,6 +90,22 @@ def one_year_before(d: date) -> date:
         return d.replace(year=d.year - 1)
     except ValueError:
         return d.replace(year=d.year - 1, day=28)
+
+
+def compute_seasonal_medians(rows: dict, cfg: Config) -> dict[str, float]:
+    """Median consumption_wh per season, over non-absence rows.
+
+    `rows` is already restricted to non-gap rows by `load_rows`'s query; absence
+    periods are excluded here via `cfg.is_absence` so the medians reflect normal
+    occupancy.
+    """
+    buckets: dict[str, list[float]] = {"winter": [], "shoulder": [], "summer": []}
+    for ds, row in rows.items():
+        d = date.fromisoformat(ds)
+        if cfg.is_absence(d):
+            continue
+        buckets[season(d)].append(row["consumption_wh"])
+    return {s: median(vals) if vals else 0.0 for s, vals in buckets.items()}
 
 
 def load_rows(db_path: str) -> dict[str, dict]:
@@ -197,7 +206,7 @@ def run_model_scenario(
         ym = ds[:7]
         ensure_month(monthly, ym)
 
-        in_absence  = ABSENCE_START <= d <= ABSENCE_END
+        in_absence  = cfg.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None:
@@ -230,7 +239,9 @@ def run_model_scenario(
     return monthly
 
 
-def run_rolling_scenario(rows: dict, window: int, start: date | None = None) -> dict[str, dict]:
+def run_rolling_scenario(
+    rows: dict, cfg: Config, window: int, start: date | None = None
+) -> dict[str, dict]:
     """Baseline: rolling N-day average consumption as the estimated need."""
     monthly: dict[str, dict] = {}
     date_set = set(rows.keys())
@@ -251,7 +262,7 @@ def run_rolling_scenario(rows: dict, window: int, start: date | None = None) -> 
                 recent.appendleft(rows[cs]["consumption_wh"])
             check -= timedelta(days=1)
 
-        in_absence  = ABSENCE_START <= d <= ABSENCE_END
+        in_absence  = cfg.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None or len(recent) == 0:
@@ -299,7 +310,7 @@ def run_blended_scenario(
                 recent.append(rows[cs]["consumption_wh"])
             check -= timedelta(days=1)
 
-        in_absence  = ABSENCE_START <= d <= ABSENCE_END
+        in_absence  = cfg.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None or len(recent) == 0:
@@ -336,7 +347,9 @@ def run_blended_scenario(
     return monthly
 
 
-def run_seasonal_fixed_scenario(rows: dict, start: date | None = None) -> dict[str, dict]:
+def run_seasonal_fixed_scenario(
+    rows: dict, cfg: Config, seasonal_medians: dict[str, float], start: date | None = None
+) -> dict[str, dict]:
     """Baseline: seasonal fixed median consumption as the estimated need."""
     monthly: dict[str, dict] = {}
     d = start or BACKTEST_START
@@ -345,7 +358,7 @@ def run_seasonal_fixed_scenario(rows: dict, start: date | None = None) -> dict[s
         ym = ds[:7]
         ensure_month(monthly, ym)
 
-        in_absence  = ABSENCE_START <= d <= ABSENCE_END
+        in_absence  = cfg.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None:
@@ -353,7 +366,7 @@ def run_seasonal_fixed_scenario(rows: dict, start: date | None = None) -> dict[s
             d += timedelta(days=1)
             continue
 
-        fixed_wh  = SEASONAL_FIXED_WH[season(d)]
+        fixed_wh  = seasonal_medians[season(d)]
         soc       = adjusted_soc(row)
         battery_wh = soc / 100.0 * BATTERY_WH
         min_soc_wh = HARD_FLOOR_FRAC * BATTERY_WH
@@ -400,11 +413,15 @@ SEASON_LABEL_AGGRESSIVE = {
     "02": "Summer P50", "03": "Summer P50",
 }
 
-SEASONAL_FIXED_LABEL = {
-    "06": "Winter 12.2kWh", "07": "Winter 12.2kWh", "08": "Winter 12.2kWh",
-    "11": "Summer 5.9kWh",  "12": "Summer 5.9kWh",  "01": "Summer 5.9kWh",
-    "02": "Summer 5.9kWh",  "03": "Summer 5.9kWh",
-}
+def seasonal_fixed_label(mon: str, seasonal_medians: dict[str, float]) -> str:
+    """Month → 'Winter 12.2kWh'-style label using computed seasonal medians (scenario E)."""
+    if mon in ("06", "07", "08"):
+        s = "winter"
+    elif mon in ("11", "12", "01", "02", "03"):
+        s = "summer"
+    else:
+        s = "shoulder"
+    return f"{s.capitalize()} {seasonal_medians[s] / 1000:.1f}kWh"
 
 
 def _capture(net: float, perfect_net: float) -> tuple[str, str, float]:
@@ -477,7 +494,7 @@ def consumption_accuracy_series(rows: dict, cfg) -> list[dict]:
     while d <= BACKTEST_END:
         ds = d.isoformat()
         row = rows.get(ds)
-        if row is not None and not (ABSENCE_START <= d <= ABSENCE_END):
+        if row is not None and not cfg.is_absence(d):
             inp = PredictInputs(
                 soc_at_6pm=row["soc_at_6pm"],
                 bom_temp_mean=row["bom_temp_mean"],
@@ -549,18 +566,24 @@ def _residual_svg(series: list[dict], roll: int = 14) -> str:
     </svg>"""
 
 
-def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[dict]) -> str:
+def build_html(
+    results: dict, recent_14: dict, recent_30: dict, accuracy: list[dict],
+    cfg: Config, seasonal_medians: dict[str, float],
+) -> str:
     months = sorted(next(iter(results.values())).keys())
     cell_class = _cell_class
 
     # Span of the (rolling) window in whole months, and how many days were served by
-    # the prior-year absence proxy (window ∩ absence period). When the latter hits 0
-    # the rolling window has moved past the absence period and the proxy handling can
-    # be retired.
+    # the prior-year absence proxy (window ∩ any configured absence period). When this
+    # hits 0 the rolling window has moved past all absence periods and the proxy
+    # handling can be retired.
     months_span = (BACKTEST_END.year - BACKTEST_START.year) * 12 + (BACKTEST_END.month - BACKTEST_START.month)
-    ov_start = max(BACKTEST_START, ABSENCE_START)
-    ov_end   = min(BACKTEST_END, ABSENCE_END)
-    proxied_days = (ov_end - ov_start).days + 1 if ov_start <= ov_end else 0
+    proxied_days = 0
+    for p in cfg.absence_periods:
+        ov_start = max(BACKTEST_START, p.start)
+        ov_end   = min(BACKTEST_END, p.end)
+        if ov_start <= ov_end:
+            proxied_days += (ov_end - ov_start).days + 1
 
     # Consumption prediction accuracy (drift monitor)
     def _mean_resid(k: int) -> float:
@@ -605,7 +628,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
                 sl = SEASON_LABEL_AGGRESSIVE.get(mon, "Shoulder P75")
                 season_tag = f'<span class="season-tag">{sl}</span>'
             elif key == "E":
-                sl  = "Winter 12.2kWh" if mon in ("06","07","08") else ("Summer 5.9kWh" if mon in ("11","12","01","02","03") else "Shoulder 6.5kWh")
+                sl = seasonal_fixed_label(mon, seasonal_medians)
                 season_tag = f'<span class="season-tag">{sl}</span>'
 
             skipped = f'<span class="skipped"> ({m["skipped"]} skipped)</span>' if m.get("skipped") else ""
@@ -720,7 +743,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
 <body>
 <h1>Safe Export Backtest</h1>
 <p class="subtitle">{BACKTEST_START} to {BACKTEST_END} &nbsp;|&nbsp; {months_span} months &nbsp;|&nbsp; Absence period: {proxied_days} days proxied (prior-year) &nbsp;|&nbsp; All scenarios: full-charge SoC</p>
-<p class="rates">Export rate: <strong>$0.15/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>$0.28/kWh</strong></p>
+<p class="rates">Export rate: <strong>${cfg.backtest.export_rate_per_kwh:.2f}/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>${cfg.backtest.buyback_rate_per_kwh:.2f}/kWh</strong></p>
 
 <div class="summary-section recent-section">
   <h2>Recent performance &mdash; last 14 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(small sample &mdash; treat as directional only)</span></h2>
@@ -753,7 +776,7 @@ def build_html(results: dict, recent_14: dict, recent_30: dict, accuracy: list[d
   <p style="font-size:0.82rem;color:#555;margin:0.5rem 0 0">
     Seasonal Px (B): Winter (Jun–Aug) P95 &nbsp;|&nbsp; Summer (Nov–Mar) P75 &nbsp;|&nbsp; Shoulder P90<br>
     Aggressive Px (F): Winter P95 &nbsp;|&nbsp; Shoulder P75 &nbsp;|&nbsp; Summer P50<br>
-    Seasonal fixed (E): Winter 12,163 Wh &nbsp;|&nbsp; Shoulder 6,481 Wh &nbsp;|&nbsp; Summer 5,859 Wh &nbsp;(dataset medians)<br>
+    Seasonal fixed (E): Winter {seasonal_medians['winter']:,.0f} Wh &nbsp;|&nbsp; Shoulder {seasonal_medians['shoulder']:,.0f} Wh &nbsp;|&nbsp; Summer {seasonal_medians['summer']:,.0f} Wh &nbsp;(dataset medians)<br>
     Net capture colour: <span style="color:#1a7a1a;font-weight:600">≥65%</span> &nbsp;|&nbsp; <span style="color:#b06000">≥55%</span> &nbsp;|&nbsp; <span style="color:#c0392b">&lt;55%</span>
   </p>
 </div>
@@ -815,14 +838,19 @@ def main() -> None:
     # Drive battery capacity + discharge floor from config (not hardcoded), so the
     # backtest's evaluation floor matches what predict() assumes for its decisions.
     global BATTERY_WH, HARD_FLOOR_FRAC, SOFT_FLOOR_FRAC, BACKTEST_START, BACKTEST_END
+    global EXPORT_RATE, BUYBACK_RATE
     BATTERY_WH      = cfg.battery_capacity_wh
     HARD_FLOOR_FRAC = cfg.battery_reserve_fraction
     SOFT_FLOOR_FRAC = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN
+    EXPORT_RATE     = cfg.backtest.export_rate_per_kwh
+    BUYBACK_RATE    = cfg.backtest.buyback_rate_per_kwh
 
     # Rolling 12-month window anchored to the dataset's last available date, so the
     # backtest window stays a consistent 12 months instead of creeping as data grows.
     BACKTEST_END   = last_dataset_date(DB_PATH)
     BACKTEST_START = one_year_before(BACKTEST_END)
+
+    seasonal_medians = compute_seasonal_medians(rows, cfg)
 
     results = {}
 
@@ -833,13 +861,13 @@ def main() -> None:
     results["B"] = run_model_scenario(rows, cfg, seasonal=True)
 
     print("Running scenario C: Baseline — 3-day rolling average...")
-    results["C"] = run_rolling_scenario(rows, window=3)
+    results["C"] = run_rolling_scenario(rows, cfg, window=3)
 
     print("Running scenario D: Baseline — 7-day rolling average...")
-    results["D"] = run_rolling_scenario(rows, window=7)
+    results["D"] = run_rolling_scenario(rows, cfg, window=7)
 
     print("Running scenario E: Baseline — seasonal fixed median...")
-    results["E"] = run_seasonal_fixed_scenario(rows)
+    results["E"] = run_seasonal_fixed_scenario(rows, cfg, seasonal_medians)
 
     print("Running scenario F: Model — full-charge SoC, aggressive seasonal Px...")
     results["F"] = run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive)
@@ -873,9 +901,9 @@ def main() -> None:
         "H":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.75, start=start_14),
         "F":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_14),
         "G":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50, start=start_14),
-        "C":  run_rolling_scenario(rows, window=3, start=start_14),
-        "D":  run_rolling_scenario(rows, window=7, start=start_14),
-        "E":  run_seasonal_fixed_scenario(rows, start=start_14),
+        "C":  run_rolling_scenario(rows, cfg, window=3, start=start_14),
+        "D":  run_rolling_scenario(rows, cfg, window=7, start=start_14),
+        "E":  run_seasonal_fixed_scenario(rows, cfg, seasonal_medians, start=start_14),
         "I1": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False, start=start_14),
         "I2": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True, start=start_14),
         "I3": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False, start=start_14),
@@ -891,9 +919,9 @@ def main() -> None:
         "H":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.75, start=start_30),
         "F":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_30),
         "G":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50, start=start_30),
-        "C":  run_rolling_scenario(rows, window=3, start=start_30),
-        "D":  run_rolling_scenario(rows, window=7, start=start_30),
-        "E":  run_seasonal_fixed_scenario(rows, start=start_30),
+        "C":  run_rolling_scenario(rows, cfg, window=3, start=start_30),
+        "D":  run_rolling_scenario(rows, cfg, window=7, start=start_30),
+        "E":  run_seasonal_fixed_scenario(rows, cfg, seasonal_medians, start=start_30),
         "I1": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False, start=start_30),
         "I2": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True, start=start_30),
         "I3": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False, start=start_30),
@@ -903,7 +931,7 @@ def main() -> None:
     }
 
     accuracy = consumption_accuracy_series(rows, cfg)
-    html = build_html(results, recent_14, recent_30, accuracy)
+    html = build_html(results, recent_14, recent_30, accuracy, cfg, seasonal_medians)
     html_path = Path("tools/backtest_report.html")
     html_path.write_text(html, encoding="utf-8")
     print(f"Report written to {html_path}")
