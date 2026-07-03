@@ -55,9 +55,12 @@ def test_dst_start_spring_forward() -> None:
 
     The prior-day boundary hours (06/12/17/18/20 on 2025-10-04) all fall
     before the 02:00 transition, so they're still AEST (+10). 10:00 on
-    2025-10-05 falls after the transition, so it's AEDT (+11). The skipped
-    hour makes the window one real hour shorter than the normal 16-hour
-    local span between ts_18_prior and ts_10_today.
+    2025-10-05 falls after the transition, so it's AEDT (+11).
+
+    Normally, hourly buckets 18,19,...,23,0,...,10 (inclusive of both ends)
+    number 17 -- a 16-hour gap between ts_18_prior and ts_10_today plus one
+    (fencepost). The skipped hour here means only 16 buckets exist, so the
+    gap is 15 hours -- the documented "16-hour window" case in windows.py.
     """
     w = windows_for_date(date(2025, 10, 5), MELBOURNE)
 
@@ -77,9 +80,12 @@ def test_dst_end_fall_back() -> None:
 
     The prior-day boundary hours (06/12/17/18/20 on 2026-04-04) all fall
     before the 03:00 transition, so they're still AEDT (+11). 10:00 on
-    2026-04-05 falls after the transition, so it's AEST (+10). The repeated
-    hour makes the window one real hour longer than the normal 16-hour
-    local span between ts_18_prior and ts_10_today.
+    2026-04-05 falls after the transition, so it's AEST (+10).
+
+    The repeated hour means 18 buckets exist (one more than the normal 17,
+    per the fencepost math in test_dst_start_spring_forward's docstring),
+    so the gap between ts_18_prior and ts_10_today is 17 hours -- the
+    documented "18-hour window" case in windows.py.
     """
     w = windows_for_date(date(2026, 4, 5), MELBOURNE)
 
