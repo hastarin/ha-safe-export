@@ -164,6 +164,8 @@ Provide a `--rebuild` flag that drops and re-extracts all rows. Useful when meth
 
 Add the new entry under `## [Unreleased]` at the top; move it to a dated version heading when tagging a release.
 
+**Version bumping:** the single source of truth is `__version__` in `src/__init__.py` (`pyproject.toml` reads it dynamically; convention: it tracks the dataset schema version). Bump it in the same commit as any behavioural change to extraction or model logic — it is stamped into every dataset row as `extraction_version`, and a stale value makes rows unattributable to the logic that produced them.
+
 ## Model coefficients are duplicated in three places — keep them in sync
 
 The four-zone model is implemented **three times**. Any change to coefficients, percentile tables, or buffers must be applied to all three or they silently diverge:

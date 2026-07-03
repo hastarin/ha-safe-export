@@ -3,7 +3,10 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [1.6.0] — 2026-07-03
+
+Version alignment release: `__version__` and the package version now both track the dataset schema version (1.6.0), and `pyproject.toml` reads the version dynamically from `src/__init__.py`.
+Everything below shipped incrementally between 2026-05-11 and 2026-06-21.
 
 ### Fixed
 
