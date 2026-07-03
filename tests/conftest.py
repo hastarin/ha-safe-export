@@ -5,7 +5,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.config import AbsencePeriod, Config, ModelConfig, ProviderPeriod, SensorConfig
+from src.config import (
+    AbsencePeriod,
+    BacktestConfig,
+    Config,
+    ModelConfig,
+    ProviderPeriod,
+    SensorConfig,
+)
 
 
 @pytest.fixture(scope="session")
@@ -53,6 +60,7 @@ def test_cfg() -> Config:
             date(2026, 5, 5),
             date(2026, 5, 6),
         ]),
+        backtest=BacktestConfig(export_rate_per_kwh=0.15, buyback_rate_per_kwh=0.28),
         # Kept in sync with config.yaml — refit 2026-05-22 (tools/retrain.py).
         model=ModelConfig(
             heating_intercept=22.5759,
