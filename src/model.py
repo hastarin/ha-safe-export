@@ -16,8 +16,8 @@ consumption profile shows 19–21 °C is already on the cooling upslope (~6.8 kW
 so the mild table consistently sits *above* the warm-boundary table. This is
 correct, not a bug: "mild" is a retained misnomer for what is really a
 low-cooling shoulder. Bands were reviewed against the profile on 2026-05-22 and
-kept at 17/19/21; renaming was rejected as cosmetic churn across three model
-implementations (this file, tools/predictor.html, tools/nodered-flow.json).
+kept at 17/19/21; renaming was rejected as cosmetic churn across two model
+implementations (this file, tools/nodered-flow.json).
 See DECISIONS.md "Zone bands retained at 17/19/21 after retraining".
 
 Coefficients and percentile tables are loaded from config.yaml.

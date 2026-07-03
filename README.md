@@ -86,8 +86,6 @@ ha-safe-export/
 │   ├── schema.sql        ← Canonical DDL for the dataset DB
 │   ├── windows.py        ← Timezone-aware window math
 │   └── model.py          ← Three-zone predictor + predict() function (Phase 2)
-├── tools/
-│   └── predictor.html    ← Interactive browser-based predictor (no Python needed)
 ├── tests/
 │   ├── fixtures.py       ← Known-good values for three validation days
 │   ├── test_extract.py   ← Extraction fixture tests
@@ -198,16 +196,6 @@ template:
 ```
 
 The `event_template_reloaded` trigger fires immediately when you reload templates via the UI — no HA restart needed after a config change.
-
-## Interactive predictor
-
-[`tools/predictor.html`](tools/predictor.html) is a standalone HTML file that embeds the model coefficients and lets you explore predictions without running Python. Open it directly in any browser:
-
-```powershell
-start tools\predictor.html
-```
-
-Sliders for temp, Solcast forecast, humidity, SOC, and confidence level update the result in real time. The humidity input is only active in the cooling zone (>21°C); the Solcast input is only active in the heating zone (<19°C).
 
 ## Node-RED automation
 

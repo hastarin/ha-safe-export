@@ -337,7 +337,7 @@ With no predictive signal, an OLS regression in this band is no better than a me
 | 17–18    | 5.92 (min) |     | 21–22    | 7.41       |
 | 18–19    | 6.01       |     | 22–23    | 8.10       |
 
-**"Mild" is a retained misnomer.** The 19–21 °C band is really a _low-cooling shoulder_, not a sweet spot. Renaming it was rejected: the zone name is hardcoded in three independent model implementations (`src/model.py`, `tools/predictor.html`, `tools/nodered-flow.json`) plus `config.py`/`config.yaml` fields and tests, so a rename is pure cosmetic churn against the Phase 2→3 contract. The misnomer is instead documented in code (`src/model.py` module docstring + inline comment).
+**"Mild" is a retained misnomer.** The 19–21 °C band is really a _low-cooling shoulder_, not a sweet spot. Renaming it was rejected: the zone name is hardcoded in two independent model implementations (`src/model.py`, `tools/nodered-flow.json`) plus `config.py`/`config.yaml` fields and tests, so a rename is pure cosmetic churn against the Phase 2→3 contract. The misnomer is instead documented in code (`src/model.py` module docstring + inline comment).
 
 **Alternatives considered:**
 

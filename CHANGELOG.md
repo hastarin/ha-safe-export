@@ -18,6 +18,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`tests/test_backtest.py`** — hand-computed unit coverage for `tools/backtest.py`'s pure economics functions (`season`, `seasonal_confidence`, `one_year_before`, `adjusted_soc`, `baseline_trough_soc`, `accum_night`, `_capture`), including the export-caused-breach and already-breached-baseline shortfall-attribution cases. Closes audit finding T4 (issue #8). Tests pin `BATTERY_WH`/`HARD_FLOOR_FRAC`/`SOFT_FLOOR_FRAC`/`EXPORT_RATE`/`BUYBACK_RATE` via monkeypatch rather than relying on module defaults, since `main()` mutates the first three from `config.yaml`.
 - **`tests/test_windows.py`** — unit tests for `src/windows.py`'s DST handling (Australia/Melbourne): a normal winter (AEST) and summer (AEDT) date, spring-forward (2025-10-05, 16-hour window / 15-hour `ts_18_prior`→`ts_10_today` gap) and fall-back (2026-04-05, 18-hour window / 17-hour gap), ordering invariants, and an assertion that the boundary hours never coincide with the 02:00-03:00 transition window. Expected timestamps are computed with a fixed-offset `datetime.timezone`, independent of the `zoneinfo` path under test.
 
+### Removed
+
+- **`tools/predictor.html`** — unused for months; deleted. Shrinks the model-coefficient sync surface from three hand-synced copies to two (`src/model.py` + `tools/nodered-flow.json`). `README.md`, `CLAUDE.md`, and `DECISIONS.md` updated to describe the two-copy sync rule.
+
 ## [1.6.0] — 2026-07-03
 
 Version alignment release: `__version__` and the package version now both track the dataset schema version (1.6.0), and `pyproject.toml` reads the version dynamically from `src/__init__.py`.

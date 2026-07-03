@@ -135,8 +135,7 @@ ha-safe-export/
 │   └── test_model.py
 ├── tools/
 │   ├── backtest.py          # economic backtest; outputs backtest_report.html/.json
-│   ├── nodered-flow.json    # Node-RED flow; runs predict() at 6pm, writes to HA helpers
-│   └── predictor.html       # browser-based model explorer (no Python required)
+│   └── nodered-flow.json    # Node-RED flow; runs predict() at 6pm, writes to HA helpers
 ├── data/                # gitignored; holds the dataset DB
 ├── CHANGELOG.md         # version history; update after schema or model changes
 └── pyproject.toml
@@ -166,19 +165,18 @@ Add the new entry under `## [Unreleased]` at the top; move it to a dated version
 
 **Version bumping:** the single source of truth is `__version__` in `src/__init__.py` (`pyproject.toml` reads it dynamically; convention: it tracks the dataset schema version). Bump it in the same commit as any behavioural change to extraction or model logic — it is stamped into every dataset row as `extraction_version`, and a stale value makes rows unattributable to the logic that produced them.
 
-## Model coefficients are duplicated in three places — keep them in sync
+## Model coefficients are duplicated in two places — keep them in sync
 
-The four-zone model is implemented **three times**. Any change to coefficients, percentile tables, or buffers must be applied to all three or they silently diverge:
+The four-zone model is implemented **twice**. Any change to coefficients, percentile tables, or buffers must be applied to both or they silently diverge:
 
 1. `src/model.py` + `config/config.yaml` — the canonical Python predictor (the Phase 2→3 contract). `config.yaml` holds the numbers; `tests/conftest.py` carries a synced copy used by the tests.
-2. `tools/predictor.html` — browser explorer; embeds the coefficients inline. Mirrors `model.py` exactly, including the confidence buffer scales.
-3. `tools/nodered-flow.json` — the **live** 6pm export automation. Embeds coefficients inline in the "Four-zone model" function node.
+2. `tools/nodered-flow.json` — the **live** 6pm export automation. Embeds coefficients inline in the "Four-zone model" function node.
 
-Retrain with `tools/retrain.py` (needs the `tools` extra — `pip install -e ".[tools]"`, numpy), review, then update `config.yaml`, `tests/conftest.py`, `predictor.html`, and `nodered-flow.json` together.
+Retrain with `tools/retrain.py` (needs the `tools` extra — `pip install -e ".[tools]"`, numpy), review, then update `config.yaml`, `tests/conftest.py`, and `nodered-flow.json` together.
 
 Sync between `config.yaml`/`tests/conftest.py`, `nodered-flow.json`, and the `model.py` confidence ladder is enforced by `tests/test_sync.py`.
 
-**Redeploy after editing these:** changing `nodered-flow.json` or `predictor.html` in the repo does NOT update what is running. You must re-import the flow into Node-RED (and reload the HTML) for changes to take effect.
+**Redeploy after editing these:** changing `nodered-flow.json` in the repo does NOT update what is running. You must re-import the flow into Node-RED for changes to take effect.
 
 `tools/nodered-flow.json` is intended to **faithfully mirror `src/model.py`** — it is the low-cost stand-in for the eventual Home Assistant integration, so it should reproduce the canonical model exactly (coefficients, percentile tables, buffers, and the confidence buffer-scale ladder `{0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}`). Do not let it drift into its own operating policy; if behaviour needs to change, change `model.py` and propagate.
 
