@@ -20,7 +20,7 @@ class DayWindows:
     ts_12_prior: int  # 12:00 local prior day — afternoon window start (for bom_temp_afternoon_max)
     ts_17_prior: int  # 17:00 prior — soc_at_6pm bucket; cum-delta start (reading at 18:00)
     ts_18_prior: int  # 18:00 prior — agg lower bound (mean/min/max sensors)
-    ts_20_prior: int  # 20:00 prior — evening-export cum-delta end (reading at 21:00 = end of 6-9pm peak)
+    ts_20_prior: int  # 20:00 prior — evening-export cum-delta end (reading at 21:00, end of 6-9pm)
     ts_10_today: int  # 10:00 row date — soc_at_11am bucket; agg upper bound + cum-delta end
 
 

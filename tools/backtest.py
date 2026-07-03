@@ -56,22 +56,28 @@ SEASONAL_FIXED_WH = {
 
 def season(d: date) -> str:
     m = d.month
-    if m in (6, 7, 8):         return "winter"
-    if m in (11, 12, 1, 2, 3): return "summer"
+    if m in (6, 7, 8):
+        return "winter"
+    if m in (11, 12, 1, 2, 3):
+        return "summer"
     return "shoulder"
 
 
 def seasonal_confidence(d: date) -> float:
     s = season(d)
-    if s == "winter":   return 0.95
-    if s == "summer":   return 0.75
+    if s == "winter":
+        return 0.95
+    if s == "summer":
+        return 0.75
     return 0.90
 
 
 def seasonal_confidence_aggressive(d: date) -> float:
     s = season(d)
-    if s == "winter":   return 0.95   # unchanged — winter is loss-making regardless
-    if s == "summer":   return 0.50
+    if s == "winter":
+        return 0.95   # unchanged — winter is loss-making regardless
+    if s == "summer":
+        return 0.50
     return 0.75
 
 
@@ -417,8 +423,10 @@ def _capture(net: float, perfect_net: float) -> tuple[str, str, float]:
 
 
 def _cell_class(val: float) -> str:
-    if val > 0.5:  return "pos"
-    if val < -0.5: return "neg"
+    if val > 0.5:
+        return "pos"
+    if val < -0.5:
+        return "neg"
     return ""
 
 
