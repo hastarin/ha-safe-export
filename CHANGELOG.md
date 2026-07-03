@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`load_config` raises `ValueError` on missing required fields, instead of a raw `KeyError`.** Every required key in the `battery`, `sensors`, and `model` sections, plus the top-level `timezone` and `providers` keys, now goes through a small `_require`/`_require_section` helper that raises `ValueError(f"{path}: missing required key {section}.{key}")` (or `missing required section {key}` for an absent block), naming the config file and the dotted key path. Optional keys (`solcast`, `guests`, `median_*`, `forecast_*`, `absence_periods`, `data_gap_dates`) are unaffected. Makes the `load_config` docstring's existing claim ("Raises ValueError on missing required fields") true. New tests cover a missing scalar key, a missing section, and the existing valid-example-config control case.
+
 ### Added
 
 - **`tests/test_sync.py`** — coefficient-parity test guarding against drift between the hand-copied coefficient sets: `tools/nodered-flow.json`'s "Four-zone model" function node vs `tests/conftest.py`'s `test_cfg` fixture, the ladder in `tools/nodered-flow.json` vs `CONFIDENCE_SCALE` in `src/model.py`, and (when `config/config.yaml` exists locally) `test_cfg` vs the real config. Fails with a message naming the drifted key on any digit mismatch; skips cleanly where `config.yaml` is absent (CI/forks).
