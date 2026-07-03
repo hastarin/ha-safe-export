@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`tools/backtest.py` no longer hardcodes installation-specific tariffs, absence dates, or seasonal medians (audit finding A3, issue #14).** Feed-in export rate and grid buyback rate move to a new optional `backtest:` section in `config.yaml` (`export_rate_per_kwh` / `buyback_rate_per_kwh`, defaulting to the previous hardcoded 0.15 / 0.28 so existing configs keep working unchanged); `config.example.yaml` documents the new section. The backtest's absence-period handling now reads `cfg.absence_periods` via `cfg.is_absence(d)` instead of the single hardcoded `ABSENCE_START`/`ABSENCE_END` window, so it generalises to any number of configured absence periods and picks up newly added ones automatically. Scenario E's seasonal fixed medians (previously frozen dataset snapshots) are now computed at runtime from `consumption_wh` over non-gap, non-absence rows and reported in the HTML subtitle/note and scenario E's month tags, so the numbers track the dataset as it grows instead of going stale.
+
 ### Fixed
 
 - **`load_config` raises `ValueError` on missing required fields, instead of a raw `KeyError`.** Every required key in the `battery`, `sensors`, and `model` sections, plus the top-level `timezone` and `providers` keys, now goes through a small `_require`/`_require_section` helper that raises `ValueError(f"{path}: missing required key {section}.{key}")` (or `missing required section {key}` for an absent block), naming the config file and the dotted key path. Optional keys (`solcast`, `guests`, `median_*`, `forecast_*`, `absence_periods`, `data_gap_dates`) are unaffected. Makes the `load_config` docstring's existing claim ("Raises ValueError on missing required fields") true. New tests cover a missing scalar key, a missing section, and the existing valid-example-config control case.

@@ -48,6 +48,12 @@ class SensorConfig:
 
 
 @dataclass
+class BacktestConfig:
+    export_rate_per_kwh: float = 0.15
+    buyback_rate_per_kwh: float = 0.28
+
+
+@dataclass
 class ModelConfig:
     heating_intercept: float
     heating_b_temp: float
@@ -81,6 +87,7 @@ class Config:
     model: ModelConfig
     absence_periods: list[AbsencePeriod] = field(default_factory=list)
     data_gap_dates: frozenset[date] = field(default_factory=frozenset)
+    backtest: BacktestConfig = field(default_factory=BacktestConfig)
 
     def provider_for(self, d: date) -> str:
         """Return the provider name for a given date."""
@@ -197,6 +204,12 @@ def load_config(path: Path) -> Config:
         date.fromisoformat(d) for d in (raw.get("data_gap_dates") or [])
     )
 
+    backtest_raw = raw.get("backtest") or {}
+    backtest = BacktestConfig(
+        export_rate_per_kwh=float(backtest_raw.get("export_rate_per_kwh", 0.15)),
+        buyback_rate_per_kwh=float(backtest_raw.get("buyback_rate_per_kwh", 0.28)),
+    )
+
     m = _require_section(raw, "model", path)
 
     def req_m(key: str) -> float:
@@ -234,4 +247,5 @@ def load_config(path: Path) -> Config:
         model=model,
         absence_periods=absence_periods,
         data_gap_dates=data_gap_dates,
+        backtest=backtest,
     )

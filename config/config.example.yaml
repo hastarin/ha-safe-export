@@ -62,6 +62,10 @@ data_gap_dates:
   # Rows on these dates get data_gap=1 and are excluded from model training.
   # - "2024-03-15"
 
+backtest:
+  export_rate_per_kwh: 0.15    # feed-in tariff, $/kWh
+  buyback_rate_per_kwh: 0.28   # grid import cost used to price shortfalls, $/kWh
+
 model:
   # Four-zone model coefficients (zone bands: 17/19/21 °C on forecast overnight mean temp).
   # The values below are placeholders — replace with your own fitted coefficients from
