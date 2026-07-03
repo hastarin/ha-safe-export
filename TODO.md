@@ -105,6 +105,11 @@ for now, since we have **no historical record** of what the floor was per night.
 
 ## Later (still deferred)
 
+- **Retire the absence-period prior-year proxy in the backtest** once the rolling 12-month
+  window has moved past 2025-11-03 (i.e. from early Nov 2026).
+  The report subtitle already shows "N days proxied" — when it reads 0, delete the
+  `ABSENCE_*`/proxy handling from `tools/backtest.py`.
+
 - **Deployment** of safe-export recommendations targeted for **September 2026** (winter
   Jun–Aug is structurally loss-making). Re-confirm with the backtest.
 - **Cooling model** still only ~64 nights (one summer); revisit after a second summer.
