@@ -23,7 +23,7 @@ def _inputs_from_fixture(date: str, **overrides) -> PredictInputs:
         bom_humidity_mean=f.get("bom_humidity_mean"),
     )
     for k, v in overrides.items():
-        object.__setattr__(base, k, v)
+        setattr(base, k, v)
     return base
 
 
@@ -104,15 +104,6 @@ def test_available_discharge_calculation(test_cfg):
     inp = PredictInputs(soc_at_6pm=80.0, bom_temp_mean=20.0)
     result = predict(inp, test_cfg)
     assert abs(result.available_discharge_wh - 9660.0) < 1.0
-
-
-def test_storm_mode_min_soc_reduces_export(test_cfg):
-    # Raising min_soc from 10% to 20% should reduce available discharge by 1380 Wh
-    base = dict(soc_at_6pm=80.0, bom_temp_mean=15.0,
-                solcast_forecast_tomorrow_wh=25000, confidence=0.50)
-    normal = predict(PredictInputs(min_soc=0.10, **base), test_cfg)
-    storm = predict(PredictInputs(min_soc=0.20, **base), test_cfg)
-    assert abs((normal.available_discharge_wh - storm.available_discharge_wh) - 1380.0) < 1.0
 
 
 def test_lower_soc_means_less_export(test_cfg):
@@ -211,7 +202,7 @@ def test_higher_min_soc_reduces_export(test_cfg):
 
 
 def test_storm_mode_min_soc_reduces_available_discharge(test_cfg):
-    # min_soc 10% → 20% should reduce available discharge by exactly 1380 Wh (1% of 13800)
+    # min_soc 10% → 20% should reduce available discharge by exactly 1380 Wh (10% of 13800)
     base = dict(soc_at_6pm=80.0, bom_temp_mean=15.0,
                 solcast_forecast_tomorrow_wh=25000, confidence=0.50)
     normal = predict(PredictInputs(min_soc=0.10, **base), test_cfg)
