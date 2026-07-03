@@ -62,5 +62,10 @@ tools/backtest_report.html
 tools/backtest_report.json
 
 # Claude Code
-.claude/
+# Ignore .claude/ contents (not the dir itself), so the skills negation below can re-include.
+# A trailing-slash `.claude/` rule would exclude the directory wholesale and Git would never
+# descend into it to see the negation.
+.claude/*
+# ...but track shared project skills (committed so cloud sessions get them from the clone).
+!.claude/skills/
 .mcp.json
