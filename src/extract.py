@@ -334,7 +334,8 @@ def extract_all(
         else:
             start = FIRST_DATE
 
-    yesterday = date.today() - timedelta(days=1)
+    # The day boundary is defined in the installation's local time, not the machine's.
+    yesterday = datetime.now(cfg.timezone).date() - timedelta(days=1)
 
     if start > yesterday:
         log.info("Dataset is up to date through %s — nothing to extract.", yesterday)

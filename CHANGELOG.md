@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **CI workflow** (`.github/workflows/ci.yml`): runs `ruff check .` and `pytest` on every push to `main` and on pull requests (Python 3.11, `ubuntu-latest`). Extraction fixture tests and other tests requiring gitignored personal data skip cleanly in this environment rather than failing.
 - CI status badge in `README.md`.
 
+### Fixed
+
+- **`extract.py`'s incremental extraction boundary used the machine-local clock instead of the configured timezone.** `yesterday = date.today() - timedelta(days=1)` in `extract_all` computed the extraction upper bound from the host's local date rather than `cfg.timezone`, an inconsistency with the project's otherwise strict timezone discipline. Harmless on a Melbourne-local box; would extract an incomplete window or lag a day if run on a UTC machine (e.g. a container). Replaced with `datetime.now(cfg.timezone).date() - timedelta(days=1)`.
+
 ## [1.6.0] — 2026-07-03
 
 Version alignment release: `__version__` and the package version now both track the dataset schema version (1.6.0), and `pyproject.toml` reads the version dynamically from `src/__init__.py`.
