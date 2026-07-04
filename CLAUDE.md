@@ -172,7 +172,7 @@ The four-zone model is implemented **twice**. Any change to coefficients, percen
 1. `src/model.py` + `config/config.yaml` — the canonical Python predictor (the Phase 2→3 contract). `config.yaml` holds the numbers; `tests/conftest.py` carries a synced copy used by the tests.
 2. `tools/nodered-flow.json` — the **live** 6pm export automation. Embeds coefficients inline in the "Four-zone model" function node.
 
-Retrain with `tools/retrain.py` (needs the `tools` extra — `pip install -e ".[tools]"`, numpy), review, then update `config.yaml`, `tests/conftest.py`, and `nodered-flow.json` together.
+Retrain with `tools/retrain.py` (needs the `tools` extra — `pip install -e ".[tools]"`, numpy), review, then update `config.yaml`, `tests/conftest.py`, and `nodered-flow.json` together. `retrain.py`'s output includes a consumption-floor check (`MIN_CONSUMPTION_KWH`, see `docs/DECISIONS.md` "Consumption-floor clamp on OLS zones") — if it reports the floor would bind on any historical night, the fit is suspect; investigate before deploying.
 
 Sync between `config.yaml`/`tests/conftest.py`, `nodered-flow.json`, and the `model.py` confidence ladder is enforced by `tests/test_sync.py`.
 

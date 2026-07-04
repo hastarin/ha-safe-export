@@ -103,6 +103,14 @@ class PredictResult:
 # imports this to report drift against freshly recomputed ratios.
 CONFIDENCE_SCALE: dict[float, float] = {0.50: 0.33, 0.75: 0.58, 0.90: 0.88, 0.95: 1.00}
 
+# Floor on the OLS point estimate (heating/cooling zones only). Non-binding on
+# current data — see DECISIONS.md "Consumption-floor clamp on OLS zones" — it
+# exists purely to guard against a pathological post-retrain coefficient set
+# extrapolating to a near-zero or negative consumption estimate. Mirrored in
+# the Node-RED flow's `Math.max(1, baseConsumption)` — keep in sync (see
+# CLAUDE.md). Empirical-table zones (warm_boundary, mild) are never clamped.
+MIN_CONSUMPTION_KWH: float = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -128,9 +136,11 @@ def _predict_consumption(
         if inputs.solcast_forecast_tomorrow_wh is not None:
             solcast_kwh = inputs.solcast_forecast_tomorrow_wh / 1000.0
             est = m.heating_intercept + m.heating_b_temp * temp + m.heating_b_solcast * solcast_kwh
+            est = max(est, MIN_CONSUMPTION_KWH)
             return est, m.heating_p95_buffer_kwh, "heating_with_solcast", "heating"
         else:
             est = m.heating_temp_only_intercept + m.heating_temp_only_b_temp * temp
+            est = max(est, MIN_CONSUMPTION_KWH)
             return est, m.heating_p95_buffer_kwh, "heating_temp_only", "heating"
 
     elif temp < 19.0:
@@ -149,9 +159,11 @@ def _predict_consumption(
                 + m.cooling_b_temp * temp
                 + m.cooling_b_humidity * inputs.bom_humidity_mean
             )
+            est = max(est, MIN_CONSUMPTION_KWH)
             return est, m.cooling_p95_buffer_kwh, "cooling_with_humidity", "cooling"
         else:
             est = m.cooling_temp_only_intercept + m.cooling_temp_only_b_temp * temp
+            est = max(est, MIN_CONSUMPTION_KWH)
             return est, m.cooling_p95_buffer_kwh, "cooling_temp_only", "cooling"
 
 

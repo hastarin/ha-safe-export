@@ -3,6 +3,7 @@
 import pytest
 
 from src.model import (
+    MIN_CONSUMPTION_KWH,
     PredictInputs,
     PredictResult,
     predict,
@@ -190,6 +191,27 @@ def test_solcast_affects_heating_consumption_estimate(test_cfg):
     cloudy = predict(PredictInputs(**base, solcast_forecast_tomorrow_wh=5000), test_cfg)
     sunny = predict(PredictInputs(**base, solcast_forecast_tomorrow_wh=40000), test_cfg)
     assert sunny.predicted_consumption_kwh < cloudy.predicted_consumption_kwh
+
+
+def test_consumption_floor_binds_on_absurd_heating_inputs(test_cfg):
+    # Boundary temp just under the heating cutoff, plus an implausibly high
+    # Solcast forecast — pushes the OLS estimate towards/below zero. The
+    # MIN_CONSUMPTION_KWH floor must still hold (see DECISIONS.md
+    # "Consumption-floor clamp on OLS zones").
+    inp = PredictInputs(soc_at_6pm=80, bom_temp_mean=16.9, solcast_forecast_tomorrow_wh=200_000)
+    result = predict(inp, test_cfg)
+    assert result.zone == "heating"
+    assert result.predicted_consumption_kwh >= MIN_CONSUMPTION_KWH
+
+
+def test_consumption_floor_binds_on_absurd_cooling_inputs(test_cfg):
+    # Boundary temp just over the cooling cutoff, plus an implausibly high
+    # humidity — pushes the OLS estimate towards/below zero at the other
+    # extreme. The floor must still hold.
+    inp = PredictInputs(soc_at_6pm=80, bom_temp_mean=21.1, bom_humidity_mean=0.0)
+    result = predict(inp, test_cfg)
+    assert result.zone == "cooling"
+    assert result.predicted_consumption_kwh >= MIN_CONSUMPTION_KWH
 
 
 def test_higher_min_soc_reduces_export(test_cfg):
