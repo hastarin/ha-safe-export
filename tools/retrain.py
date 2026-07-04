@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.model import CONFIDENCE_SCALE
+from src.model import CONFIDENCE_SCALE, MIN_CONSUMPTION_KWH
 
 DB_PATH = "data/dataset.db"
 
@@ -264,6 +264,34 @@ model:
           f"temp_only R2={heat['temp_only_r2']:.3f} n={heat['temp_only_n']})")
     print(f"  (cooling primary R2={cool['primary_r2']:.3f} n={cool['primary_n']}, "
           f"temp_only R2={cool['temp_only_r2']:.3f} n={cool['temp_only_n']})")
+
+    # ---- consumption-floor check --------------------------------------------
+    # See DECISIONS.md "Consumption-floor clamp on OLS zones": after a retrain,
+    # confirm MIN_CONSUMPTION_KWH still doesn't bind anywhere in the historical
+    # input range. If it does, the fit is suspect — investigate before deploying.
+    print("\n" + "=" * 70)
+    print(f"consumption-floor check (MIN_CONSUMPTION_KWH = {MIN_CONSUMPTION_KWH} kWh)")
+    print("=" * 70)
+
+    heating_rows = by_zone["heating"]
+    heating_min = min(
+        predict_kwh_heating(heat["primary"], heat["temp_only"], r, "solcast_kwh")
+        for r in heating_rows
+    )
+    heating_binds = heating_min < MIN_CONSUMPTION_KWH
+    heating_warn = "  ** FLOOR WOULD BIND — investigate this fit **" if heating_binds else ""
+    print(f"  heating: min fitted estimate over {len(heating_rows)} historical nights "
+          f"= {heating_min:.3f} kWh{heating_warn}")
+
+    cooling_rows = by_zone["cooling"]
+    cooling_min = min(
+        predict_kwh_heating(cool["primary"], cool["temp_only"], r, "humidity")
+        for r in cooling_rows
+    )
+    cooling_binds = cooling_min < MIN_CONSUMPTION_KWH
+    cooling_warn = "  ** FLOOR WOULD BIND — investigate this fit **" if cooling_binds else ""
+    print(f"  cooling: min fitted estimate over {len(cooling_rows)} historical nights "
+          f"= {cooling_min:.3f} kWh{cooling_warn}")
 
     # ---- confidence_scale drift --------------------------------------------
     print("\n" + "=" * 70)

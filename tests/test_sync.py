@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from src.config import load_config
-from src.model import CONFIDENCE_SCALE
+from src.model import CONFIDENCE_SCALE, MIN_CONSUMPTION_KWH
 
 FLOW_JSON = Path("tools/nodered-flow.json")
 REAL_CONFIG = Path("config/config.yaml")
@@ -134,6 +134,17 @@ def test_nodered_flow_conf_ladder_matches_model_py():
         assert flow_val == model_val, (
             f"CONF ladder scale for {key} drifted: "
             f"nodered-flow.json={flow_val!r} vs src/model.py CONFIDENCE_SCALE={model_val!r}"
+        )
+
+
+def test_nodered_flow_consumption_floor_matches_model_py():
+    func = _load_flow_func()
+    matches = re.findall(r"Math\.max\(\s*(" + _NUM + r")\s*,\s*baseConsumption\s*\)", func)
+    assert matches, 'Could not find `Math.max(N, baseConsumption)` clamp in nodered-flow.json'
+    for flow_val in matches:
+        assert float(flow_val) == MIN_CONSUMPTION_KWH, (
+            f"Consumption floor drifted: nodered-flow.json Math.max({flow_val}, ...) "
+            f"vs src/model.py MIN_CONSUMPTION_KWH={MIN_CONSUMPTION_KWH!r}"
         )
 
 
