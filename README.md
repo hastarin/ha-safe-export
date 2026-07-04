@@ -147,6 +147,16 @@ python -m src.extract /path/to/home-assistant_v2.db --rebuild
 python -m pytest
 ```
 
+### AI agent tooling (optional)
+
+The `work-issue` skill (and CLAUDE.md's GitHub conventions generally) work with plain `gh`, but are smoother with the [`gh-axi`](https://github.com/kunchenguid/gh-axi) skill installed, which wraps `gh` for issues/PRs/CI/releases. It requires `gh` itself to be installed and authenticated (`gh auth status`) first:
+
+```bash
+npx skills add kunchenguid/gh-axi --skill gh-axi -g
+```
+
+Not required — agents fall back to plain `gh` (or native GitHub MCP tools, in sessions that expose them) if `gh-axi` isn't present.
+
 ## Home Assistant template sensors
 
 The model needs overnight mean temperature and humidity derived from the hourly weather forecast. Add these trigger-based template sensors to your HA `configuration.yaml` (or a package YAML file). They call `weather.get_forecasts` on a schedule and average the 6pm–11am window.
