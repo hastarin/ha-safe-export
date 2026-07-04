@@ -492,7 +492,7 @@ def _cell_class(val: float) -> str:
     return ""
 
 
-def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
+def _recent_summary_rows(results: dict, nights_warn: int) -> str:
     """Return HTML rows for a recent-window summary table (all scenarios, single aggregated row each)."""
     rows_html = []
 
@@ -796,7 +796,7 @@ def build_html(
     <thead>
       <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
     </thead>
-    <tbody>{_recent_summary_rows(recent_14, "14-day", nights_warn=14)}</tbody>
+    <tbody>{_recent_summary_rows(recent_14, nights_warn=14)}</tbody>
   </table>
 </div>
 
@@ -806,7 +806,7 @@ def build_html(
     <thead>
       <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
     </thead>
-    <tbody>{_recent_summary_rows(recent_30, "30-day", nights_warn=20)}</tbody>
+    <tbody>{_recent_summary_rows(recent_30, nights_warn=20)}</tbody>
   </table>
 </div>
 {accuracy_section}

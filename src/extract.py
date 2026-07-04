@@ -309,7 +309,21 @@ def extract_all(
     """
     ha = sqlite3.connect(f"file:{ha_db}?mode=ro", uri=True)
     ds = sqlite3.connect(dataset_db)
+    try:
+        _extract_all_inner(ha, ds, ha_db, cfg, rebuild, from_date)
+    finally:
+        ha.close()
+        ds.close()
 
+
+def _extract_all_inner(
+    ha: sqlite3.Connection,
+    ds: sqlite3.Connection,
+    ha_db: Path,
+    cfg: Config,
+    rebuild: bool,
+    from_date: date | None,
+) -> None:
     schema_sql = (Path(__file__).parent / "schema.sql").read_text()
 
     if rebuild:
@@ -339,8 +353,6 @@ def extract_all(
 
     if start > yesterday:
         log.info("Dataset is up to date through %s — nothing to extract.", yesterday)
-        ha.close()
-        ds.close()
         return
 
     log.info("Extracting %s → %s", start, yesterday)
@@ -432,7 +444,7 @@ def extract_all(
         (p.start_date.isoformat() for p in cfg.providers if p.name == "globird"), ""
     )
     for key, value in [
-        ("schema_version", "1.6.0"),
+        ("schema_version", __version__),
         ("last_full_extraction", now_utc),
         ("source_db_path", str(ha_db.resolve())),
         ("globird_start_date", globird_start),
@@ -450,9 +462,6 @@ def extract_all(
             len(gap_warnings),
             ", ".join(gap_warnings),
         )
-
-    ha.close()
-    ds.close()
 
 
 def main() -> None:
