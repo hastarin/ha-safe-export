@@ -111,6 +111,17 @@ def _forecast_at_6pm(
     return None
 
 
+def _required_id(ids: dict[str, int | None], key: str) -> int:
+    """Return a sensor's metadata ID.
+
+    _get_metadata_ids raises for a required sensor with no ID, so this is never
+    None in practice — narrows the type for callers like _cum_delta.
+    """
+    mid = ids[key]
+    assert mid is not None, f"{key!r} is a required sensor but has no metadata ID"
+    return mid
+
+
 def extract_row(
     ha: sqlite3.Connection,
     ids: dict[str, int | None],
@@ -156,14 +167,20 @@ def extract_row(
     ).fetchone()
     consumption_wh_load = round(row[0]) if row and row[0] is not None else None
 
-    grid_import_wh = _cum_delta(ha, ids["grid_import"], w.ts_17_prior, w.ts_10_today)
-    grid_export_wh = _cum_delta(ha, ids["grid_export"], w.ts_17_prior, w.ts_10_today)
-    battery_charged_wh = _cum_delta(ha, ids["battery_charged"], w.ts_17_prior, w.ts_10_today)
-    battery_discharged_wh = _cum_delta(ha, ids["battery_discharged"], w.ts_17_prior, w.ts_10_today)
+    grid_import_wh = _cum_delta(ha, _required_id(ids, "grid_import"), w.ts_17_prior, w.ts_10_today)
+    grid_export_wh = _cum_delta(ha, _required_id(ids, "grid_export"), w.ts_17_prior, w.ts_10_today)
+    battery_charged_wh = _cum_delta(
+        ha, _required_id(ids, "battery_charged"), w.ts_17_prior, w.ts_10_today
+    )
+    battery_discharged_wh = _cum_delta(
+        ha, _required_id(ids, "battery_discharged"), w.ts_17_prior, w.ts_10_today
+    )
     # Grid export over the 6–9pm peak only (proxy for deliberate battery-to-grid export).
     # Reads cumulative at 18:00 (sum @ 17:00) and 21:00 (sum @ 20:00). Not in `required` —
     # NULL on a gap is acceptable; the backtest treats missing as zero export.
-    evening_grid_export_wh = _cum_delta(ha, ids["grid_export"], w.ts_17_prior, w.ts_20_prior)
+    evening_grid_export_wh = _cum_delta(
+        ha, _required_id(ids, "grid_export"), w.ts_17_prior, w.ts_20_prior
+    )
 
     required = {
         "grid_import_wh": grid_import_wh,
@@ -172,8 +189,14 @@ def extract_row(
         "battery_discharged_wh": battery_discharged_wh,
         "solar_wh_before_11am": solar_wh,
     }
-    missing = [k for k, v in required.items() if v is None]
-    if missing:
+    if (
+        solar_wh is None
+        or grid_import_wh is None
+        or grid_export_wh is None
+        or battery_charged_wh is None
+        or battery_discharged_wh is None
+    ):
+        missing = [k for k, v in required.items() if v is None]
         log.warning("Skipping %s — missing data for: %s", date_str, ", ".join(missing))
         return None
 

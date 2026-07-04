@@ -38,3 +38,9 @@ select = ["E", "F", "I", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "."
+files = ["src"]
+ignore_missing_imports = true
