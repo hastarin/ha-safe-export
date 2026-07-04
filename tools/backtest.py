@@ -59,12 +59,28 @@ class BacktestParams:
     end: date = DEFAULT_BACKTEST_END
     absence_periods: list[AbsencePeriod] = field(default_factory=list)
 
+    @classmethod
+    def from_config(cls, cfg: Config, *, start: date, end: date) -> "BacktestParams":
+        """Derive evaluation params from the same Config that predict() reads,
+        so the scoring capacity/floor cannot drift from what the model assumes
+        for its decisions.
+        """
+        return cls(
+            battery_wh=cfg.battery_capacity_wh,
+            hard_floor_frac=cfg.battery_reserve_fraction,
+            export_rate=cfg.backtest.export_rate_per_kwh,
+            buyback_rate=cfg.backtest.buyback_rate_per_kwh,
+            start=start,
+            end=end,
+            absence_periods=cfg.absence_periods,
+        )
+
     @property
     def soft_floor_frac(self) -> float:
         return self.hard_floor_frac + self.soft_floor_margin
 
     def is_absence(self, d: date) -> bool:
-        return any(p.start <= d <= p.end for p in self.absence_periods)
+        return any(p.contains(d) for p in self.absence_periods)
 
 
 def season(d: date) -> str:
@@ -869,18 +885,9 @@ def main() -> None:
     backtest_end   = last_dataset_date(DB_PATH)
     backtest_start = one_year_before(backtest_end)
 
-    # Drive battery capacity + discharge floor from config (not hardcoded), so the
-    # backtest's evaluation floor matches what predict() assumes for its decisions.
-    params = BacktestParams(
-        battery_wh=cfg.battery_capacity_wh,
-        hard_floor_frac=cfg.battery_reserve_fraction,
-        soft_floor_margin=DEFAULT_SOFT_FLOOR_MARGIN,
-        export_rate=cfg.backtest.export_rate_per_kwh,
-        buyback_rate=cfg.backtest.buyback_rate_per_kwh,
-        start=backtest_start,
-        end=backtest_end,
-        absence_periods=cfg.absence_periods,
-    )
+    # Derive evaluation params from config (not hardcoded), so the backtest's
+    # capacity/floor matches what predict() assumes for its decisions.
+    params = BacktestParams.from_config(cfg, start=backtest_start, end=backtest_end)
 
     seasonal_medians = compute_seasonal_medians(rows, params)
 

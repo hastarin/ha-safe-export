@@ -13,6 +13,40 @@ import pytest
 import tools.backtest as bt
 
 # ---------------------------------------------------------------------------
+# BacktestParams.from_config()
+# ---------------------------------------------------------------------------
+
+
+def test_backtest_params_from_config_mirrors_config(test_cfg):
+    """Params derived from Config must mirror it exactly — predict() reads the
+    same Config, so any divergence would score the model against a different
+    battery than the one it decided with."""
+    params = bt.BacktestParams.from_config(
+        test_cfg, start=date(2025, 5, 11), end=date(2026, 5, 10)
+    )
+    assert params.battery_wh == test_cfg.battery_capacity_wh
+    assert params.hard_floor_frac == test_cfg.battery_reserve_fraction
+    assert params.export_rate == test_cfg.backtest.export_rate_per_kwh
+    assert params.buyback_rate == test_cfg.backtest.buyback_rate_per_kwh
+    assert params.absence_periods == test_cfg.absence_periods
+    assert params.start == date(2025, 5, 11)
+    assert params.end == date(2026, 5, 10)
+    # soft floor = config hard floor + the documented default margin
+    assert params.soft_floor_frac == pytest.approx(
+        test_cfg.battery_reserve_fraction + bt.DEFAULT_SOFT_FLOOR_MARGIN
+    )
+
+
+def test_backtest_params_is_absence_matches_config(test_cfg):
+    params = bt.BacktestParams.from_config(
+        test_cfg, start=date(2025, 5, 11), end=date(2026, 5, 10)
+    )
+    # Boundary days around the fixture's absence period (2025-09-28..2025-11-03).
+    for d in (date(2025, 9, 27), date(2025, 9, 28), date(2025, 11, 3), date(2025, 11, 4)):
+        assert params.is_absence(d) == test_cfg.is_absence(d)
+
+
+# ---------------------------------------------------------------------------
 # season() / seasonal_confidence()
 # ---------------------------------------------------------------------------
 
@@ -119,8 +153,8 @@ def test_baseline_trough_soc_missing_evening_export_defaults_zero(params_13800):
 # ---------------------------------------------------------------------------
 # accum_night()
 # ---------------------------------------------------------------------------
-# All cases below pin BATTERY_WH=10000, HARD_FLOOR_FRAC=0.10 (hard=10%),
-# SOFT_FLOOR_FRAC=0.20 (soft=20%), EXPORT_RATE=0.15, BUYBACK_RATE=0.28.
+# All cases below use the econ fixture's params: battery_wh=10000,
+# hard floor 10%, soft floor 20%, export_rate=0.15, buyback_rate=0.28.
 
 
 @pytest.fixture
