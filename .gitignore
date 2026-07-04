@@ -69,3 +69,4 @@ tools/backtest_report.json
 # ...but track shared project skills (committed so cloud sessions get them from the clone).
 !.claude/skills/
 .mcp.json
+.lavish/
