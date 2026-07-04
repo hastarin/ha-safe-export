@@ -442,6 +442,161 @@ def test_extract_row_missing_required_endpoint_skips(full_day):
 # ---------------------------------------------------------------------------
 
 
+def _seed_minimal_day(conn: sqlite3.Connection, ids: dict, morning_date: date) -> None:
+    """Seed just enough statistics for extract_row to produce a non-skipped row.
+
+    Values are arbitrary (not hand-computed for a specific expected result) — these
+    tests care about *which dates* end up in daily_observations, not the column
+    values, so nothing here needs to match a fixture.
+    """
+    w = windows_for_date(morning_date, TZ)
+    insert_stat(conn, ids["battery_soc"], w.ts_17_prior, mean=80.0)
+    insert_stat(conn, ids["battery_soc"], w.ts_10_today, mean=60.0)
+    insert_stat(conn, ids["pv"], w.ts_18_prior, mean=0.0)
+    for ts in range(w.ts_18_prior, w.ts_10_today + 1, HOUR):
+        insert_stat(conn, ids["load"], ts, mean=-300.0)
+    insert_stat(conn, ids["grid_import"], w.ts_17_prior, sum=0.0)
+    insert_stat(conn, ids["grid_import"], w.ts_10_today, sum=100.0)
+    insert_stat(conn, ids["grid_export"], w.ts_17_prior, sum=0.0)
+    insert_stat(conn, ids["grid_export"], w.ts_20_prior, sum=0.0)
+    insert_stat(conn, ids["grid_export"], w.ts_10_today, sum=0.0)
+    insert_stat(conn, ids["battery_charged"], w.ts_17_prior, sum=0.0)
+    insert_stat(conn, ids["battery_charged"], w.ts_10_today, sum=0.0)
+    insert_stat(conn, ids["battery_discharged"], w.ts_17_prior, sum=0.0)
+    insert_stat(conn, ids["battery_discharged"], w.ts_10_today, sum=0.0)
+
+
+# ---------------------------------------------------------------------------
+# extract_all — incremental resume (MAX(date)+1) and --rebuild (T0.2 safety net
+# for the rebuild-atomicity change; pins current behaviour before it changes)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_all_resumes_from_max_date_plus_one(tmp_path):
+    # extract_all's incremental upper bound is always the real "yesterday", so
+    # day2 is anchored there: the first call (from_date=day1) extracts exactly
+    # {day1, day2}, then the second (from_date-less) call has nothing new to
+    # find — proving it resumed from MAX(date)+1=day3 (beyond the upper bound)
+    # rather than re-extracting day1/day2 or jumping back to FIRST_DATE.
+    day2 = datetime.now(TZ).date() - timedelta(days=1)
+    day1 = day2 - timedelta(days=1)
+
+    ha_path = tmp_path / "ha.db"
+    conn = make_ha_db(ha_path)
+    ids = {key: register(conn, statistic_id) for key, statistic_id in REQUIRED_SENSOR_IDS.items()}
+    _seed_minimal_day(conn, ids, day1)
+    _seed_minimal_day(conn, ids, day2)
+    conn.commit()
+    conn.close()
+
+    cfg = make_cfg()
+    dataset_db = tmp_path / "dataset.db"
+
+    # First run: from_date=day1, upper bound=yesterday=day2 -> extracts both.
+    extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=cfg, from_date=day1)
+
+    with sqlite3.connect(dataset_db) as ds:
+        dates = {r[0] for r in ds.execute("SELECT date FROM daily_observations")}
+    assert dates == {day1.isoformat(), day2.isoformat()}
+
+    # Corrupt day1's row so a spurious re-extraction (e.g. a resume bug that
+    # jumps back to FIRST_DATE) would be caught by the assertion below.
+    with sqlite3.connect(dataset_db) as ds:
+        ds.execute(
+            "UPDATE daily_observations SET consumption_wh = -999999 WHERE date = ?",
+            (day1.isoformat(),),
+        )
+        ds.commit()
+
+    # Second run: no from_date/rebuild -> must resume from MAX(date)+1 = day3,
+    # which is beyond the incremental upper bound (day2) -> no-op.
+    extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=cfg)
+
+    with sqlite3.connect(dataset_db) as ds:
+        ds.row_factory = sqlite3.Row
+        rows = {
+            r["date"]: r["consumption_wh"]
+            for r in ds.execute("SELECT date, consumption_wh FROM daily_observations")
+        }
+    assert set(rows) == {day1.isoformat(), day2.isoformat()}
+    assert rows[day1.isoformat()] == -999999  # untouched, not re-extracted
+
+
+def test_extract_all_rebuild_drops_and_reextracts(tmp_path):
+    day1 = date(2024, 6, 10)
+    day2 = date(2024, 6, 11)
+
+    ha_path = tmp_path / "ha.db"
+    conn = make_ha_db(ha_path)
+    ids = {key: register(conn, statistic_id) for key, statistic_id in REQUIRED_SENSOR_IDS.items()}
+    for d in (day1, day2):
+        _seed_minimal_day(conn, ids, d)
+    conn.commit()
+    conn.close()
+
+    cfg = make_cfg()
+    dataset_db = tmp_path / "dataset.db"
+
+    extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=cfg, from_date=day1)
+    with sqlite3.connect(dataset_db) as ds:
+        before = {r[0] for r in ds.execute("SELECT date FROM daily_observations")}
+    assert before == {day1.isoformat(), day2.isoformat()}
+
+    # Manually corrupt a row so we can prove --rebuild actually re-extracts it
+    # rather than leaving the old (stale) value in place.
+    with sqlite3.connect(dataset_db) as ds:
+        ds.execute(
+            "UPDATE daily_observations SET consumption_wh = -999999 WHERE date = ?",
+            (day1.isoformat(),),
+        )
+        ds.commit()
+
+    # --rebuild with an explicit from_date so the test doesn't walk all the way
+    # back to FIRST_DATE (2023-11-28) — from_date takes priority over rebuild's
+    # FIRST_DATE default (see extract_all's start-date branching).
+    extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=cfg, rebuild=True, from_date=day1)
+
+    with sqlite3.connect(dataset_db) as ds:
+        ds.row_factory = sqlite3.Row
+        rows = {
+            r["date"]: r["consumption_wh"]
+            for r in ds.execute("SELECT date, consumption_wh FROM daily_observations")
+        }
+    assert set(rows) == {day1.isoformat(), day2.isoformat()}
+    assert rows[day1.isoformat()] != -999999  # re-extracted, not left stale
+
+
+def test_extract_all_up_to_date_returns_without_error(tmp_path):
+    """The 'nothing to extract' early-return path (start > yesterday) must not raise
+    and must leave any existing rows untouched — this is the path T2.3's connection
+    cleanup refactor changed from an explicit ha.close()/ds.close() to try/finally.
+    """
+    yesterday = datetime.now(TZ).date() - timedelta(days=1)
+
+    ha_path = tmp_path / "ha.db"
+    conn = make_ha_db(ha_path)
+    ids = {key: register(conn, statistic_id) for key, statistic_id in REQUIRED_SENSOR_IDS.items()}
+    _seed_minimal_day(conn, ids, yesterday)
+    conn.commit()
+    conn.close()
+
+    cfg = make_cfg()
+    dataset_db = tmp_path / "dataset.db"
+
+    extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=cfg, from_date=yesterday)
+    with sqlite3.connect(dataset_db) as ds:
+        before = {r[0] for r in ds.execute("SELECT date FROM daily_observations")}
+    assert before == {yesterday.isoformat()}
+
+    # Running again with no from_date: MAX(date)+1 = today, which is > yesterday
+    # (the incremental upper bound), so this should be a no-op, not an error.
+    extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=cfg)
+
+    with sqlite3.connect(dataset_db) as ds:
+        after = {r[0] for r in ds.execute("SELECT date FROM daily_observations")}
+    assert after == before
+
+
 def test_gap_warning_triggers_on_imbalanced_low_battery_day(tmp_path, caplog):
     # Use "yesterday" so extract_all's single-day incremental run only processes
     # this one synthetic day, regardless of when the test suite happens to run.
