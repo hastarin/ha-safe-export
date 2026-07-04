@@ -233,6 +233,8 @@ The `event_template_reloaded` trigger fires immediately when you reload template
 | Get battery SOC | `sensor.byd_battery_box_premium_hv_state_of_charge` | Your battery's state-of-charge sensor |
 | Get min SOC cutoff | `sensor.byd_battery_box_premium_hv_soc_minimum` | Your battery's minimum SOC sensor |
 
+> **Known issue:** the flow fails closed (writes `safe_export = 0`, `zone: "error"`) when a required sensor's state is `unknown`/`unavailable`, but it does **not** guard against an entity ID that doesn't exist at all — a "Get …" node pointed at a nonexistent entity throws and halts the flow before it reaches the model, leaving the HA helpers holding their previous values. This is only a risk if an entity ID is mistyped during setup or renamed/deleted later; double-check the five entity IDs above against Developer Tools → States after import.
+
 **5. Update the battery capacity** in the "Three-zone linear model" function node. Near the top, change `BATTERY_KWH` to match your battery's usable capacity in kWh:
 
 ```js
