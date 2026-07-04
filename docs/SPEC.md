@@ -23,7 +23,7 @@ The provider is recorded in the dataset because tariff structure influences cons
 
 At **6:00pm on day N**, given inputs available at that moment, predict the maximum energy `E_export` (in Wh) that can be exported from the battery between 6pm and 9pm on day N such that:
 
-> **The battery State of Charge at 11am on day N+1 remains above a configurable safety threshold (default 20%) with high confidence (default ≥90%).**
+> **The battery State of Charge at 11am on day N+1 remains above the configured discharge floor (`battery.reserve_fraction`, default 10%) with high confidence (default ≥90%).**
 
 The 11am endpoint is chosen deliberately: it is the start of the GloBird free-power window when active, and the natural recovery point of the morning solar ramp regardless of provider. After 11am, the system has clear paths to recharge.
 
@@ -100,8 +100,8 @@ Configured absence periods are excluded from training and from these metric calc
 | Phase                                           | Deliverable                                                                                                                                                                                                              | Status            |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
 | **Phase 1** — Standalone Python data extraction | `src/extract.py` builds the dataset SQLite DB; tests reproduce three known-good fixtures exactly                                                                                                                         | **Complete**      |
-| **Phase 2** — Modelling                         | Train a model (or stack of models) that produces the prediction objective above. Evaluate against success criteria on a held-out time slice. Output: a trained model file + a `predict()` function                       | **Current phase** |
-| **Phase 3** — Home Assistant integration        | Package as a HACS-compatible custom integration. Auto-discovers required sensors (or asks during config). Provides the export-limit sensor and a service to query predictions. Re-extracts daily, retrains periodically. | After Phase 2     |
+| **Phase 2** — Modelling                         | Train a model (or stack of models) that produces the prediction objective above. Evaluate against success criteria on a held-out time slice. Output: a trained model file + a `predict()` function                       | **Complete**      |
+| **Phase 3** — Home Assistant integration        | Package as a HACS-compatible custom integration. Auto-discovers required sensors (or asks during config). Provides the export-limit sensor and a service to query predictions. Re-extracts daily, retrains periodically. | **Current phase** — Node-RED stand-in live at P50 since 2026-05-22; HACS integration targeted September 2026 |
 
 Each phase produces artifacts the next phase consumes — the dataset is the contract between Phase 1 and Phase 2; the trained model + `predict()` is the contract between Phase 2 and Phase 3.
 
@@ -116,12 +116,13 @@ To keep the project tractable, these are explicitly not addressed:
 - **Inverter command/control** — Phase 3 _exposes_ a recommended limit. Translating that to actual inverter behaviour (Amber API, Fronius local API, etc.) is left to user-built automations until proven necessary.
 - **Faulty-data handling beyond logging** — the extraction script logs warnings on energy-balance imbalances but does not auto-correct or impute.
 
-## Open questions for Phase 2
+## Open questions for Phase 2 (status)
 
-These are deferred until we have the dataset in hand:
+These were deferred until we had the dataset in hand.
+Most have since been resolved; the rest remain open and are tracked in `docs/DECISIONS.md`'s "Open / deferred decisions".
 
-- Single model or decomposed (separate solar + consumption models)?
-- Classical (gradient-boosted trees with Solcast + weather forecast as features) or temporal (sequence model over recent days)?
-- How should provider transitions be handled — separate models per provider, or provider as a feature, or fine-tune across providers?
-- How much history is enough? Does the EA period (pre-Aug 2025) help or hurt vs Amber-period data?
-- How to incorporate the guests flag with so few positive examples (currently 1)?
+- **Single model or decomposed?** Resolved: decomposed into four temperature-keyed zones (heating, warm-boundary, mild, cooling), not a single model or a separate solar/consumption split. See "Four-zone model for overnight consumption" in `docs/DECISIONS.md`.
+- **Classical or temporal?** Resolved: classical, not sequence-based — OLS regression for the heating and cooling zones, empirical percentile tables for the warm-boundary and mild zones. See the same "Four-zone model for overnight consumption" entry.
+- **How should provider transitions be handled?** Still open. Provider is recorded in the dataset but not passed to `predict()`; deferred until enough data exists under each tariff to evaluate separate-model vs feature vs fine-tune approaches. See "Provider handling" under "Open / deferred decisions" in `docs/DECISIONS.md`.
+- **How much history is enough? Does the EA period help or hurt vs Amber-period data?** Resolved in practice, not by separate study: the 2026-05-22 retrain used all 858 available trainable nights (`absence_period=0 AND data_gap=0`) without provider-period stratification. See "Four-zone model for overnight consumption" for the retrain details; provider-specific performance remains future work (see "Provider handling" above).
+- **How to incorporate the guests flag with so few positive examples?** Still open/deferred. The column is populated (`NULL` before the sensor existed, per "Guests column is NULL before 2026-03-08" in `docs/DECISIONS.md`) but not yet used by the model — too few positive examples remain to evaluate it.

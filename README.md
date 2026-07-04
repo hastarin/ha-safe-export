@@ -4,7 +4,9 @@
 
 Predict the maximum amount of energy that can be safely exported from a home battery during the evening peak, without leaving the home short before solar recovers the next morning.
 
-> **Status:** Phase 2 (modelling) — data extraction complete; prediction model built and tested.
+> **Status:** Phase 3 (Home Assistant integration) underway.
+> Phases 1 (data extraction) and 2 (modelling) are complete.
+> A Node-RED flow has run the model live at P50 confidence since 2026-05-22, as a low-cost stand-in for the eventual HACS integration (targeted September 2026).
 
 ---
 
@@ -76,20 +78,32 @@ Phase 1 builds the extraction half. Phase 2 builds the prediction half. Phase 3 
 ha-safe-export/
 ├── CLAUDE.md             ← Standing instructions for AI agents working on the code
 ├── README.md             ← This file
+├── CHANGELOG.md          ← Version history (Keep a Changelog format)
+├── TODO.md               ← Working notes and live-testing follow-ups
+├── config/
+│   ├── config.example.yaml ← Template config
+│   └── config.yaml         ← gitignored; your sensor names, coefficients, and history
 ├── docs/
 │   ├── SPEC.md           ← Project specification: prediction objective, success criteria
 │   ├── DATASET.md        ← Data contract: schema, sensors, formulas, validation samples
 │   ├── DECISIONS.md      ← Rationale log for design choices (read before changing them)
 │   └── analysis/         ← Background analysis docs (model selection, schema evolution)
 ├── src/
+│   ├── config.py         ← Config dataclass + load_config()
 │   ├── extract.py        ← Builds and refreshes the dataset (Phase 1)
 │   ├── schema.sql        ← Canonical DDL for the dataset DB
 │   ├── windows.py        ← Timezone-aware window math
-│   └── model.py          ← Three-zone predictor + predict() function (Phase 2)
+│   ├── model.py          ← Four-zone predictor + predict() function (Phase 2)
+│   └── migrations/       ← Historical schema migrations (not auto-applied; schema.sql is canonical)
 ├── tests/
 │   ├── fixtures.py       ← Known-good values for three validation days
 │   ├── test_extract.py   ← Extraction fixture tests
-│   └── test_model.py     ← Model unit and regression tests
+│   ├── test_model.py     ← Model unit and regression tests
+│   └── test_sync.py      ← Enforces coefficient parity across config.yaml/conftest.py/nodered-flow.json/model.py
+├── tools/
+│   ├── backtest.py       ← Economic backtest; outputs backtest_report.html/.json
+│   ├── retrain.py        ← Refits the four-zone model from the dataset
+│   └── nodered-flow.json ← Live Node-RED flow: runs predict() at 6pm, writes to HA helpers
 ├── data/                 ← gitignored; holds the dataset DB
 └── pyproject.toml
 ```
@@ -110,8 +124,8 @@ The `DECISIONS.md` log is the most important one to consult before changing how 
 | Phase                  | Deliverable                                                                                                                          | Status        |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
 | **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (v1.3.0, 33 columns); passes three validation fixtures            | **Complete**  |
-| **2. Modelling**       | `src/model.py` — three-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3    | **Complete**  |
-| **3. HA integration**  | HACS-installable custom component; auto-discovers sensors; exposes `sensor.safe_export_wh`                                           | Not started   |
+| **2. Modelling**       | `src/model.py` — four-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3     | **Complete**  |
+| **3. HA integration**  | Node-RED flow live at P50 as a stand-in; HACS-installable custom component targeted for September 2026                              | **Underway**  |
 
 ## Setup
 
@@ -205,7 +219,7 @@ The `event_template_reloaded` trigger fires immediately when you reload template
 
 1. Triggers at 6pm (plus a manual trigger button for testing)
 2. Reads five HA sensors in sequence: overnight forecast temp, humidity, Solcast tomorrow, battery SOC, and min SOC cutoff
-3. Runs the three-zone linear model in a function node (no Python needed — coefficients are embedded as JS constants)
+3. Runs the four-zone linear model in a function node (no Python needed — coefficients are embedded as JS constants)
 4. Writes results to two HA helpers:
    - `input_number.safe_export_wh` — P90 safe export in **Wh** (integer). Use this directly as a W export limit for a 1-hour window, or divide by 3 to spread over 3 hours.
    - `input_text.safe_export_detail` — compact JSON with all four confidence levels and context. All `p50`/`p75`/`p90`/`p95` values in the JSON are **Wh**; `avail_kwh` is kWh. Internal model fields (`consumption`, `buffer`, `total_needed`, `grid_needed`) are kWh.
@@ -235,7 +249,7 @@ The `event_template_reloaded` trigger fires immediately when you reload template
 
 > **Known issue:** the flow fails closed (writes `safe_export = 0`, `zone: "error"`) when a required sensor's state is `unknown`/`unavailable`, but it does **not** guard against an entity ID that doesn't exist at all — a "Get …" node pointed at a nonexistent entity throws and halts the flow before it reaches the model, leaving the HA helpers holding their previous values. This is only a risk if an entity ID is mistyped during setup or renamed/deleted later; double-check the five entity IDs above against Developer Tools → States after import.
 
-**5. Update the battery capacity** in the "Three-zone linear model" function node. Near the top, change `BATTERY_KWH` to match your battery's usable capacity in kWh:
+**5. Update the battery capacity** in the "Four-zone model" function node. Near the top, change `BATTERY_KWH` to match your battery's usable capacity in kWh:
 
 ```js
 const BATTERY_KWH = 13.8;  // ← replace with your battery's usable capacity
@@ -245,7 +259,9 @@ const BATTERY_KWH = 13.8;  // ← replace with your battery's usable capacity
 
 ### Updating the model
 
-When you retrain (every few months), only the constants at the top of the "Three-zone linear model" function node need updating — the eight coefficient values (`b0`, `b1`, `b2` for heating and cooling zones, the four `MILD` percentile values, and the two P95 buffer values).
+When you retrain (every few months), only the constants at the top of the "Four-zone model" function node need updating.
+This is more than a handful of values now: the heating and cooling zone coefficients (`b0`/`b1`/`b2` each, plus their temp-only fallback `b0`/`b1` pairs), the two P95 buffer values, the `WARM` and `MILD` empirical percentile tables (four values each), and the four-value confidence buffer-scale ladder (`CONF`).
+`tests/test_sync.py` enforces that these stay identical to `src/model.py`, `config/config.yaml`, and `tests/conftest.py` — run `pytest` after editing either side to confirm they still agree.
 
 ### Exposing the result as an HA sensor
 
