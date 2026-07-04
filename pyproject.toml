@@ -14,7 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 # Dev/analysis only — not required by the runtime predictor. Used by tools/retrain.py.
 tools = [
-    "numpy>=1.26",
+    "numpy>=2.4.6",
 ]
 
 [tool.setuptools.dynamic]
