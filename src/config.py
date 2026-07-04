@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import date
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -110,31 +110,13 @@ class Config:
 
     @property
     def sensor_ids(self) -> dict[str, str | None]:
-        """Return the sensor config as a dict for use in extract.py."""
-        s = self.sensors
-        return {
-            "battery_soc": s.battery_soc,
-            "pv": s.pv,
-            "load": s.load,
-            "grid_import": s.grid_import,
-            "grid_export": s.grid_export,
-            "battery_charged": s.battery_charged,
-            "battery_discharged": s.battery_discharged,
-            "outdoor_temp": s.outdoor_temp,
-            "indoor_temp": s.indoor_temp,
-            "guests": s.guests,
-            "weather_temp": s.weather_temp,
-            "weather_feels_like": s.weather_feels_like,
-            "weather_rain": s.weather_rain,
-            "weather_wind": s.weather_wind,
-            "weather_gust": s.weather_gust,
-            "solcast": s.solcast,
-            "median_temp": s.median_temp,
-            "weather_humidity": s.weather_humidity,
-            "median_humidity": s.median_humidity,
-            "forecast_temp": s.forecast_temp,
-            "forecast_humidity": s.forecast_humidity,
-        }
+        """Return the sensor config as a dict for use in extract.py.
+
+        Derived from `fields(SensorConfig)` rather than hand-listed, so adding a
+        sensor field propagates here automatically — see issue #39. The dict keys
+        are exactly the `SensorConfig` field names.
+        """
+        return {f.name: getattr(self.sensors, f.name) for f in fields(self.sensors)}
 
 
 def _require_section(raw: dict, key: str, path: Path) -> dict:

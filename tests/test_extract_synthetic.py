@@ -278,6 +278,42 @@ def test_get_metadata_ids_optional_sensor_configured_but_absent(tmp_path):
     assert ids["solcast"] is None
 
 
+def test_optional_sensors_derived_matches_hardcoded_set():
+    """`_OPTIONAL_SENSORS` is derived from SensorConfig's None-default fields, so a
+    sensor added with `= None` is automatically tolerated as absent. This pins the
+    derived set to the previously-handcoded contract from issue #39 — if the two
+    ever disagree, the discrepancy likely reveals a latent bug (a sensor marked
+    optional-in-dataclass but missing from the old hand list, or vice versa)."""
+    from src.extract import _OPTIONAL_SENSORS
+
+    expected = {"guests", "solcast", "median_temp", "median_humidity",
+                "forecast_temp", "forecast_humidity"}
+    assert set(_OPTIONAL_SENSORS) == expected
+
+
+def test_sensor_ids_property_keys_match_sensorconfig_fields():
+    """Config.sensor_ids is derived from `fields(SensorConfig)`, so its keys are
+    exactly the SensorConfig field names — adding a sensor propagates without a
+    second hand-list. Pins that contract against accidental re-hardcoding."""
+    from dataclasses import fields as dataclass_fields
+
+    from src.config import SensorConfig
+
+    # make_cfg builds a minimal Config; its sensor_ids must carry every field.
+    cfg = make_cfg()
+    assert set(cfg.sensor_ids.keys()) == {f.name for f in dataclass_fields(SensorConfig)}
+
+
+def test_required_sensor_missing_is_not_in_optional_sensors():
+    """Sanity: the required sensors the synthetic fixture registers are NOT in the
+    derived optional set — confirms `f.default is None` correctly excludes fields
+    without a default."""
+    from src.extract import _OPTIONAL_SENSORS
+
+    for key in REQUIRED_SENSOR_IDS:
+        assert key not in _OPTIONAL_SENSORS
+
+
 # ---------------------------------------------------------------------------
 # extract_row — a complete, hand-computable synthetic day
 # ---------------------------------------------------------------------------
