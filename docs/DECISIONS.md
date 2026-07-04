@@ -268,6 +268,24 @@ The extraction script detects likely new gaps automatically: a large energy imba
 
 ---
 
+### Real sensor names and historical absence/gap dates are public; future absence dates are not committed until in the past
+
+**Decision:** Accept (Option A from issue #42) that real sensor entity IDs and _historical_ absence/gap dates are public in this repo — in `tests/conftest.py`'s `test_cfg`, `config/config.example.yaml`, the README setup instructions, and `docs/DATASET.md`'s validation samples. Adopt a forward-looking rule: **do not commit a future absence period to any fixture or example until that period has ended.** Only add an absence window to `tests/conftest.py`, `config/config.example.yaml`, or similar committed fixtures after it is safely in the past.
+**Status:** Locked.
+**Date:** 2026-07-04
+
+**Rationale:** `.gitignore` excludes `config/config.yaml` on the stated grounds that it "contains sensor names and personal history", but the same sensor entity IDs and the real absence period (`2025-09-28` → `2025-11-03`) are already committed in `tests/conftest.py`, and the README deliberately publishes the sensor names in its setup instructions. The privacy boundary was therefore inconsistent with its own rationale. Practical risk today is low: the sensor names are published on purpose (they are installation-specific identifiers, not credentials), and the committed absence dates are historical. The genuine risk this rule targets is _future_ occupancy disclosure — without it, every new absence window added to fixtures would advertise dates the home will be empty before they occur.
+
+**Alternatives considered:**
+
+- _Option B (synthesise absence/gap dates in fixtures)_ — rejected. Replacing the real `2025-09-28..2025-11-03` window and `data_gap_dates` in `tests/conftest.py` with synthetic dates would require also updating the boundary assertion in `tests/test_backtest.py::test_backtest_params_is_absence_matches_config`, and would detach the test fixtures from the real validation samples documented in `docs/DATASET.md`. The marginal privacy gain (masking a historical absence) does not justify the drift between fixtures, documented validation samples, and live config.
+
+**Scope of "fixture":** this rule covers any committed file that carries absence or data-gap dates — `tests/conftest.py`, `config/config.example.yaml`, and any future committed fixture. It does not cover the gitignored `config/config.yaml`, which is the owner's private copy and may freely contain future-dated absence windows.
+
+**Note on `config.example.yaml`:** the example template uses placeholder dates that are clearly synthetic; this rule does not require changing them. The rule constrains only _real_ (non-placeholder) absence dates being added to committed files.
+
+---
+
 ## Validation fixtures
 
 ### Three days, deliberately diverse
