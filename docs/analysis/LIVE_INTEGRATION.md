@@ -30,6 +30,24 @@ the Truganina forecast, **not** BOM. See the temperature-source warning in `DATA
 The flow computes `available = (soc − minSoc)/100 × BATTERY_KWH`, subtracts the model's
 `consumption + buffer`, and emits the **P50** safe-export figure (Wh) as `msg.payload`.
 
+### Fallback and fail-closed behaviour (added 2026-07-04, issue #11)
+
+Only **`temp`, `soc`, `minSoc`** are hard-required. `solcast_kwh` and `humidity` are
+soft-required — missing either falls back to a temp-only OLS variant
+(`H_TEMP_ONLY`/`C_TEMP_ONLY` in the flow, mirroring `heating_temp_only`/`cooling_temp_only`
+in `src/model.py`), exactly like `_predict_consumption` does. The fallback is invisible to
+the HA helpers except via `model_info`, which names the variant used.
+
+If any of the three hard-required inputs is `NaN` (sensor unavailable/unknown), the flow
+**fails closed**: it writes `zone: "error"`, a `reason` string, a fresh `updated_at`
+timestamp, and **`safe_export = 0`** at every confidence level, instead of the previous
+behaviour of returning `null` and leaving `input_number.safe_export_wh` /
+`input_text.safe_export_detail` holding the prior night's values. `node.error()` is still
+called so the failure is visible in the Node-RED debug sidebar. This closes the
+silent-stale gap: `automation.grid_export_start_at_scheduled_time`'s `target > 0` guard now
+reliably sees 0 and skips the export session on a failed prediction, rather than possibly
+acting on stale data from a previous successful run.
+
 ## The export execution chain (HA side)
 
 The flow does **not** drive the battery directly. It writes a result; a chain of HA helpers,
