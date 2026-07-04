@@ -74,7 +74,7 @@ As of an audit on 2026-05-31, **three were silently not being recorded** and had
 - GitHub operations: prefer the `gh-axi` skill if it's installed. Otherwise fall back to plain `gh`. Otherwise use native GitHub MCP tools if the session has them. Nested/structured JSON bodies that don't fit `gh-axi`'s flat `--field` pairs are the one standing exception — use `gh api ... --input -` for those.
 - When fetching an issue or PR body with `gh-axi issue view` / `pr view`, always pass `--full` on the first fetch. The default view truncates the body, and re-fetching without `--full` first just doubles the round-trip for no reason.
 - Use the Bash tool (not PowerShell) for shell commands in this project.
-- Never add agent name/identity as co-author or mention agent involvement in commit messages.
+- When writing commit messages, NEVER add your agent name as co-author or mention agent involvement.
 - When writing or substantially editing long Markdown files (`docs/*.md`), put each full sentence on its own line — preserve normal Markdown structure, but avoid wrapping multiple sentences onto one physical line.
 - When fixing a bug in extraction or model logic, reproduce it first: write a failing test (extend `tests/fixtures.py`/`test_extract.py`/`test_model.py`, or add a minimal repro if none of the existing fixtures cover it) before writing the fix, so the fix is proven against the real defect rather than a guess.
 - `config/config.yaml` is gitignored because it contains personal sensor names, battery details, and absence-period history. Never print/echo its contents, paste it into a commit message, PR body, or issue, or otherwise let its values leave the local session.
