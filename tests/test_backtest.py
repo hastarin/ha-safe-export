@@ -1,11 +1,9 @@
 """Tests for tools/backtest.py — pure economics functions (issue #8, audit T4).
 
-`tools/backtest.py` mutates module-level globals (BATTERY_WH, HARD_FLOOR_FRAC,
-SOFT_FLOOR_FRAC, EXPORT_RATE, BUYBACK_RATE) in main() from config.yaml. The
-functions under test read those globals directly, so every test here pins
-them explicitly via monkeypatch rather than relying on the module defaults —
-this also makes the hand-computed expected values in each test comment
-self-contained and independent of future default changes.
+Functions under test take an explicit `BacktestParams` rather than reading
+module globals, so every test here builds its own params rather than relying
+on the module defaults — this also makes the hand-computed expected values in
+each test comment self-contained and independent of future default changes.
 """
 
 from datetime import date
@@ -88,33 +86,34 @@ def test_adjusted_soc_max_soc_already_100_passthrough():
 # ---------------------------------------------------------------------------
 
 
-def test_baseline_trough_soc_evening_export_add_back(monkeypatch):
-    monkeypatch.setattr(bt, "BATTERY_WH", 13800.0)
+@pytest.fixture
+def params_13800() -> "bt.BacktestParams":
+    return bt.BacktestParams(battery_wh=13800.0)
+
+
+def test_baseline_trough_soc_evening_export_add_back(params_13800):
     # soc_used == soc_at_6pm (no full-charge delta); evening export of 690 Wh
     # adds back 690/13800*100 = 5.0 points.
     row = {"soc_at_6pm": 80.0, "min_soc_overnight": 30.0, "evening_grid_export_wh": 690.0}
-    assert bt.baseline_trough_soc(row, soc_used=80.0) == pytest.approx(35.0)
+    assert bt.baseline_trough_soc(row, soc_used=80.0, params=params_13800) == pytest.approx(35.0)
 
 
-def test_baseline_trough_soc_full_charge_delta_shift(monkeypatch):
-    monkeypatch.setattr(bt, "BATTERY_WH", 13800.0)
+def test_baseline_trough_soc_full_charge_delta_shift(params_13800):
     # soc_used 85 vs soc_at_6pm 70 -> delta 15 points shifts the trough up;
     # no evening export.
     row = {"soc_at_6pm": 70.0, "min_soc_overnight": 20.0, "evening_grid_export_wh": 0.0}
-    assert bt.baseline_trough_soc(row, soc_used=85.0) == pytest.approx(35.0)
+    assert bt.baseline_trough_soc(row, soc_used=85.0, params=params_13800) == pytest.approx(35.0)
 
 
-def test_baseline_trough_soc_caps_at_100(monkeypatch):
-    monkeypatch.setattr(bt, "BATTERY_WH", 13800.0)
+def test_baseline_trough_soc_caps_at_100(params_13800):
     # 95 + 0 + 1380/13800*100 (=10) = 105, capped to 100.
     row = {"soc_at_6pm": 90.0, "min_soc_overnight": 95.0, "evening_grid_export_wh": 1380.0}
-    assert bt.baseline_trough_soc(row, soc_used=90.0) == pytest.approx(100.0)
+    assert bt.baseline_trough_soc(row, soc_used=90.0, params=params_13800) == pytest.approx(100.0)
 
 
-def test_baseline_trough_soc_missing_evening_export_defaults_zero(monkeypatch):
-    monkeypatch.setattr(bt, "BATTERY_WH", 13800.0)
+def test_baseline_trough_soc_missing_evening_export_defaults_zero(params_13800):
     row = {"soc_at_6pm": 50.0, "min_soc_overnight": 40.0}
-    assert bt.baseline_trough_soc(row, soc_used=50.0) == pytest.approx(40.0)
+    assert bt.baseline_trough_soc(row, soc_used=50.0, params=params_13800) == pytest.approx(40.0)
 
 
 # ---------------------------------------------------------------------------
@@ -125,18 +124,20 @@ def test_baseline_trough_soc_missing_evening_export_defaults_zero(monkeypatch):
 
 
 @pytest.fixture
-def econ(monkeypatch):
-    monkeypatch.setattr(bt, "BATTERY_WH", 10000.0)
-    monkeypatch.setattr(bt, "HARD_FLOOR_FRAC", 0.10)
-    monkeypatch.setattr(bt, "SOFT_FLOOR_FRAC", 0.20)
-    monkeypatch.setattr(bt, "EXPORT_RATE", 0.15)
-    monkeypatch.setattr(bt, "BUYBACK_RATE", 0.28)
+def econ() -> "bt.BacktestParams":
+    return bt.BacktestParams(
+        battery_wh=10000.0,
+        hard_floor_frac=0.10,
+        soft_floor_margin=0.10,  # soft floor = 0.20
+        export_rate=0.15,
+        buyback_rate=0.28,
+    )
 
 
-def _run(export_wh: float, trough_soc: float) -> dict:
+def _run(export_wh: float, trough_soc: float, params: "bt.BacktestParams") -> dict:
     monthly: dict = {}
     bt.ensure_month(monthly, "2026-01")
-    bt.accum_night(monthly, "2026-01", export_wh=export_wh, trough_soc=trough_soc)
+    bt.accum_night(monthly, "2026-01", export_wh=export_wh, trough_soc=trough_soc, params=params)
     return monthly["2026-01"]
 
 
@@ -147,7 +148,7 @@ def test_accum_night_no_breach(econ):
     # revenue = 2000/1000*0.15 = 0.30
     # opportunity = (3000-2000)/1000*0.15 = 0.15
     # perfect_net = 3000/1000*0.15 = 0.45
-    m = _run(export_wh=2000.0, trough_soc=50.0)
+    m = _run(export_wh=2000.0, trough_soc=50.0, params=econ)
     assert m["revenue"] == pytest.approx(0.30)
     assert m["shortfall"] == pytest.approx(0.0)
     assert m["opportunity"] == pytest.approx(0.15)
@@ -164,7 +165,7 @@ def test_accum_night_export_caused_breach(econ):
     # perfect_export = max(0, (15-20)/100*10000) = 0 (trough below soft floor)
     # opportunity = max(0, (0-1000)/1000)*0.15 = 0
     # perfect_net = 0
-    m = _run(export_wh=1000.0, trough_soc=15.0)
+    m = _run(export_wh=1000.0, trough_soc=15.0, params=econ)
     assert m["revenue"] == pytest.approx(0.15)
     assert m["shortfall"] == pytest.approx(0.14)
     assert m["opportunity"] == pytest.approx(0.0)
@@ -175,7 +176,7 @@ def test_accum_night_already_breached_baseline_zero_export(econ):
     # trough 8% (below hard floor 10, already breached with no export).
     # base_breach = (10-8)/100*10000 = 200. sim_breach with export_wh=0 is the
     # same 200 -> shortfall = max(0, 200-200) = 0, not blamed on export.
-    m = _run(export_wh=0.0, trough_soc=8.0)
+    m = _run(export_wh=0.0, trough_soc=8.0, params=econ)
     assert m["shortfall"] == pytest.approx(0.0)
     assert m["revenue"] == pytest.approx(0.0)
     assert m["perfect_net"] == pytest.approx(0.0)
@@ -187,7 +188,7 @@ def test_accum_night_already_breached_baseline_small_export_charges_extra_only(e
     # shortfall = max(0, 400-200) = 200 Wh -- only the extra 2-point breach.
     # revenue = 200/1000*0.15 = 0.03
     # shortfall_cost = 200/1000*0.28 = 0.056
-    m = _run(export_wh=200.0, trough_soc=8.0)
+    m = _run(export_wh=200.0, trough_soc=8.0, params=econ)
     assert m["revenue"] == pytest.approx(0.03)
     assert m["shortfall"] == pytest.approx(0.056)
     assert m["perfect_net"] == pytest.approx(0.0)
@@ -197,7 +198,7 @@ def test_accum_night_perfect_export_drains_exactly_to_soft_floor(econ):
     # trough 50%, perfect_export = (50-20)/100*10000 = 3000 Wh. Exporting
     # exactly that much should leave sim_trough at the soft floor (20%) with
     # no shortfall.
-    m = _run(export_wh=3000.0, trough_soc=50.0)
+    m = _run(export_wh=3000.0, trough_soc=50.0, params=econ)
     assert m["shortfall"] == pytest.approx(0.0)
     assert m["perfect_net"] == pytest.approx(0.45)  # 3000/1000*0.15
 
@@ -205,7 +206,7 @@ def test_accum_night_perfect_export_drains_exactly_to_soft_floor(econ):
 def test_accum_night_perfect_export_zero_when_trough_below_soft_floor(econ):
     # trough 15% is below the soft floor (20%), so there's no cushion left to
     # call "perfect" -> perfect_export = 0 regardless of export_wh.
-    m = _run(export_wh=0.0, trough_soc=15.0)
+    m = _run(export_wh=0.0, trough_soc=15.0, params=econ)
     assert m["perfect_net"] == pytest.approx(0.0)
 
 
