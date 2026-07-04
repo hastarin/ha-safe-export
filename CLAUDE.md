@@ -71,6 +71,7 @@ As of an audit on 2026-05-31, **three were silently not being recorded** and had
 - The dataset DB is the project's own SQLite file, separate from the HA DB
 - Don't waste time/tokens trying to fix lint errors on markdown files, ask the user to fix them
 - Windows console is cp1252: a script that `print()`s non-ASCII (e.g. the `α` in a backtest scenario label) raises `UnicodeEncodeError`. The project tools write UTF-8 files fine — this only bites ad-hoc scripts printing to the terminal. Prefix such runs with `PYTHONIOENCODING=utf-8` (the dev box also sets this as a user env var, but don't rely on that being present)
+- GitHub operations (issues, PRs, CI runs, releases, labels) go through the `gh-axi` skill, not raw `gh`. Fall back to plain `gh` only if `gh-axi` is unavailable (e.g. the `~/.claude/skills` junction to `~/.agents/skills` is missing). Nested/structured JSON bodies that don't fit `gh-axi`'s flat `--field` pairs are the one standing exception — use `gh api ... --input -` for those.
 
 ## Testing
 
