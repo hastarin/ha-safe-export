@@ -89,6 +89,30 @@ automations, and scripts decides whether and how to export.
   `target > 0` guard then prevents a session. Verified end-to-end for 2026-05-30
   (forecast temp 9.3 °C, SoC 96.2%, minSoc 10% → need ~14.3 kWh > 11.9 kWh available → 0).
 
+### Freshness backstop: the sunrise / HA-start reset (added 2026-07-04, issue #37)
+
+The copy automation (step 2 above) only runs in the 17:55–18:05 window, so a stale
+`safe_export_wh` value from a previous night could in principle be propagated into
+`input_number.grid_export_target_wh` if Node-RED or the HA websocket were down at 18:00.
+
+This freshness risk is mitigated upstream by an HA automation (in the owner's HA config,
+not this repo) that **resets `input_number.grid_export_target_wh` to 0 at sunrise and on HA
+start**.
+
+This is the freshness defence for the chain:
+
+- It re-zeroes the export target before each day's window, so a failed or stale Node-RED run
+  cannot leave an export sized on old data in place for the next evening.
+- Only a fresh in-window copy (step 2, 17:55–18:05) repopulates it — and only from a freshly
+  written `safe_export_wh`.
+- The copy automation therefore does not need its own timestamp-freshness check; the daily
+  reset is the single source of truth for "is this target from today?".
+
+Combined with the fail-closed behaviour above (which writes `safe_export = 0` on a failed
+prediction), the chain has two independent zeroes: the model-side zero on failure, and the
+config-side zero each morning. Either alone is enough to keep a stale value from driving an
+export session.
+
 ## Recording requirement (auditability)
 
 To reconstruct or backtest what the live system decided on a past night, **all five input
