@@ -6,6 +6,10 @@ gitignored), tests/conftest.py's test_cfg fixture (documented synced copy), and 
 "Four-zone model" function node in tools/nodered-flow.json (the live system). The
 confidence ladder is additionally hardcoded in src/model.py. Nothing enforces these
 stay in sync except convention — this test fails loudly the moment any copy drifts.
+
+Also guards the dataset schema version, hand-copied between src/schema.sql's header
+comment and src/__init__.py's __version__ (the latter is stamped into extraction_meta
+at runtime — see src/extract.py).
 """
 
 from __future__ import annotations
@@ -17,11 +21,13 @@ from pathlib import Path
 
 import pytest
 
+from src import __version__
 from src.config import load_config
 from src.model import CONFIDENCE_SCALE, MIN_CONSUMPTION_KWH
 
 FLOW_JSON = Path("tools/nodered-flow.json")
 REAL_CONFIG = Path("config/config.yaml")
+SCHEMA_SQL = Path("src/schema.sql")
 
 _NUM = r"-?\d+\.?\d*"
 
@@ -182,6 +188,24 @@ def test_nodered_flow_consumption_floor_matches_model_py():
     assert flow_val == MIN_CONSUMPTION_KWH, (
         f"Consumption floor drifted: nodered-flow.json MIN_CONSUMPTION_KWH={flow_val!r} "
         f"vs src/model.py MIN_CONSUMPTION_KWH={MIN_CONSUMPTION_KWH!r}"
+    )
+
+
+def test_schema_sql_header_matches_version():
+    """schema.sql's leading '-- Schema version: X' comment must match __version__.
+
+    The dataset schema version is stamped from __version__ into extraction_meta
+    on every extraction run (see src/extract.py); the schema.sql header comment
+    is a third, hand-maintained copy of the same number with nothing else
+    enforcing agreement. A drifted header would mislead anyone reading the DDL
+    about which schema version it actually defines.
+    """
+    header = SCHEMA_SQL.read_text(encoding="utf-8").splitlines()[0]
+    m = re.match(r"-- Schema version: (\S+)", header)
+    assert m, f"Expected '-- Schema version: X' as the first line of {SCHEMA_SQL}, got: {header!r}"
+    assert m.group(1) == __version__, (
+        f"schema.sql header drifted: {SCHEMA_SQL}={m.group(1)!r} "
+        f"vs src/__init__.py __version__={__version__!r}"
     )
 
 

@@ -121,11 +121,11 @@ The `DECISIONS.md` log is the most important one to consult before changing how 
 
 ## Phases
 
-| Phase                  | Deliverable                                                                                                                          | Status        |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
-| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (v1.3.0, 33 columns); passes three validation fixtures            | **Complete**  |
-| **2. Modelling**       | `src/model.py` — four-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3     | **Complete**  |
-| **3. HA integration**  | Node-RED flow live at P50 as a stand-in; HACS-installable custom component targeted for September 2026                              | **Underway**  |
+| Phase                  | Deliverable                                                                                                                                                               | Status       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (see `src/schema.sql` for the current version); passes three validation fixtures                       | **Complete** |
+| **2. Modelling**       | `src/model.py` — four-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3                                          | **Complete** |
+| **3. HA integration**  | Node-RED flow live at P50 confidence since 2026-05-22. A HACS component is a possible future step; whether it's worth building is an open trade-off, not a committed date | **Underway** |
 
 ## Setup
 
@@ -221,7 +221,7 @@ The `event_template_reloaded` trigger fires immediately when you reload template
 2. Reads five HA sensors in sequence: overnight forecast temp, humidity, Solcast tomorrow, battery SOC, and min SOC cutoff
 3. Runs the four-zone linear model in a function node (no Python needed — coefficients are embedded as JS constants)
 4. Writes results to two HA helpers:
-   - `input_number.safe_export_wh` — P90 safe export in **Wh** (integer). Use this directly as a W export limit for a 1-hour window, or divide by 3 to spread over 3 hours.
+   - `input_number.safe_export_wh` — P50 safe export in **Wh** (integer) — the flow's current default output, found to be the viable operating level (see TODO.md). Use this directly as a W export limit for a 1-hour window, or divide by 3 to spread over 3 hours. All four confidence levels are available in the detail JSON below if you want a more conservative figure.
    - `input_text.safe_export_detail` — compact JSON with all four confidence levels and context. All `p50`/`p75`/`p90`/`p95` values in the JSON are **Wh**; `avail_kwh` is kWh. Internal model fields (`consumption`, `buffer`, `total_needed`, `grid_needed`) are kWh.
 
 ### Installation
