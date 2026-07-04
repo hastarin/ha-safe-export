@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from datetime import date
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -126,7 +127,7 @@ def _require_section(raw: dict, key: str, path: Path) -> dict:
         raise ValueError(f"{path}: missing required section {key}") from None
 
 
-def _require(section: dict, key: str, path: Path, where: str = "") -> object:
+def _require(section: dict, key: str, path: Path, where: str = "") -> Any:
     try:
         return section[key]
     except KeyError:
