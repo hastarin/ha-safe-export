@@ -21,6 +21,10 @@ class AbsencePeriod:
     start: date
     end: date
 
+    def contains(self, d: date) -> bool:
+        """True if d falls within the period (inclusive of both ends)."""
+        return self.start <= d <= self.end
+
 
 @dataclass
 class SensorConfig:
@@ -99,7 +103,7 @@ class Config:
         return current
 
     def is_absence(self, d: date) -> bool:
-        return any(p.start <= d <= p.end for p in self.absence_periods)
+        return any(p.contains(d) for p in self.absence_periods)
 
     def is_data_gap(self, d: date) -> bool:
         return d in self.data_gap_dates

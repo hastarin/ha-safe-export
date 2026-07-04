@@ -21,30 +21,66 @@ Output: HTML report.
 import json
 import sqlite3
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from statistics import median
 
-from src.config import Config, load_config
+from src.config import AbsencePeriod, Config, load_config
 from src.model import PredictInputs, predict
 
 DB_PATH = "data/dataset.db"
-EXPORT_RATE  = 0.15   # $/kWh; default, main() overrides from config.yaml's backtest section
-BUYBACK_RATE = 0.28   # $/kWh; default, main() overrides from config.yaml's backtest section
 
-# Defaults; main() overrides BATTERY_WH / HARD_FLOOR_FRAC / SOFT_FLOOR_FRAC from
-# config.yaml (battery_capacity_wh, battery_reserve_fraction) so the evaluation
-# floor matches what predict() assumes for its decisions.
-BATTERY_WH        = 13800.0   # BYD 13.8 kWh
-HARD_FLOOR_FRAC   = 0.10      # grid-discharge floor; breaching it = grid buyback (shortfall)
-SOFT_FLOOR_MARGIN = 0.10      # 'perfect' export leaves this cushion above the hard floor
-SOFT_FLOOR_FRAC   = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN  # 0.20
+# Documented defaults for the BacktestParams constructor — main() builds the real
+# params from config.yaml + the dataset's last date. Not used directly by any
+# scenario/economics function; importing this module is safe without main().
+DEFAULT_EXPORT_RATE     = 0.15    # $/kWh
+DEFAULT_BUYBACK_RATE    = 0.28    # $/kWh
+DEFAULT_BATTERY_WH      = 13800.0 # BYD 13.8 kWh
+DEFAULT_HARD_FLOOR_FRAC = 0.10    # grid-discharge floor; breaching it = grid buyback (shortfall)
+DEFAULT_SOFT_FLOOR_MARGIN = 0.10  # 'perfect' export leaves this cushion above the hard floor
+DEFAULT_BACKTEST_START  = date(2025, 5, 11)
+DEFAULT_BACKTEST_END    = date(2026, 5, 20)
 
-# Defaults; main() overrides these to a rolling 12 months anchored to the dataset's
-# last date (BACKTEST_END = last available date, BACKTEST_START = one year prior), so
-# the window doesn't creep as more days are extracted.
-BACKTEST_START = date(2025, 5, 11)
-BACKTEST_END   = date(2026, 5, 20)
+
+@dataclass(frozen=True)
+class BacktestParams:
+    """Evaluation parameters for a backtest run — built in main() from Config
+    + the dataset's last date. Threading this through avoids module-level
+    mutable state: importing any scenario/economics function is safe without
+    running main() first.
+    """
+    battery_wh: float = DEFAULT_BATTERY_WH
+    hard_floor_frac: float = DEFAULT_HARD_FLOOR_FRAC
+    soft_floor_margin: float = DEFAULT_SOFT_FLOOR_MARGIN
+    export_rate: float = DEFAULT_EXPORT_RATE
+    buyback_rate: float = DEFAULT_BUYBACK_RATE
+    start: date = DEFAULT_BACKTEST_START
+    end: date = DEFAULT_BACKTEST_END
+    absence_periods: list[AbsencePeriod] = field(default_factory=list)
+
+    @classmethod
+    def from_config(cls, cfg: Config, *, start: date, end: date) -> "BacktestParams":
+        """Derive evaluation params from the same Config that predict() reads,
+        so the scoring capacity/floor cannot drift from what the model assumes
+        for its decisions.
+        """
+        return cls(
+            battery_wh=cfg.battery_capacity_wh,
+            hard_floor_frac=cfg.battery_reserve_fraction,
+            export_rate=cfg.backtest.export_rate_per_kwh,
+            buyback_rate=cfg.backtest.buyback_rate_per_kwh,
+            start=start,
+            end=end,
+            absence_periods=cfg.absence_periods,
+        )
+
+    @property
+    def soft_floor_frac(self) -> float:
+        return self.hard_floor_frac + self.soft_floor_margin
+
+    def is_absence(self, d: date) -> bool:
+        return any(p.contains(d) for p in self.absence_periods)
 
 
 def season(d: date) -> str:
@@ -92,17 +128,17 @@ def one_year_before(d: date) -> date:
         return d.replace(year=d.year - 1, day=28)
 
 
-def compute_seasonal_medians(rows: dict, cfg: Config) -> dict[str, float]:
+def compute_seasonal_medians(rows: dict, params: BacktestParams) -> dict[str, float]:
     """Median consumption_wh per season, over non-absence rows.
 
     `rows` is already restricted to non-gap rows by `load_rows`'s query; absence
-    periods are excluded here via `cfg.is_absence` so the medians reflect normal
+    periods are excluded here via `params.is_absence` so the medians reflect normal
     occupancy.
     """
     buckets: dict[str, list[float]] = {"winter": [], "shoulder": [], "summer": []}
     for ds, row in rows.items():
         d = date.fromisoformat(ds)
-        if cfg.is_absence(d):
+        if params.is_absence(d):
             continue
         buckets[season(d)].append(row["consumption_wh"])
     return {s: median(vals) if vals else 0.0 for s, vals in buckets.items()}
@@ -135,7 +171,7 @@ def adjusted_soc(row: dict) -> float:
     return soc
 
 
-def baseline_trough_soc(row: dict, soc_used: float) -> float:
+def baseline_trough_soc(row: dict, soc_used: float, params: BacktestParams) -> float:
     """Reconstruct the no-export overnight SoC trough (%) for this night.
 
     `min_soc_overnight` is what actually happened — but it is depressed by any
@@ -147,12 +183,12 @@ def baseline_trough_soc(row: dict, soc_used: float) -> float:
     """
     delta_full_charge = soc_used - row["soc_at_6pm"]
     evening_export_wh = row.get("evening_grid_export_wh") or 0
-    trough = row["min_soc_overnight"] + delta_full_charge + (evening_export_wh / BATTERY_WH) * 100.0
+    trough = row["min_soc_overnight"] + delta_full_charge + (evening_export_wh / params.battery_wh) * 100.0
     return min(100.0, trough)
 
 
 def accum_night(
-    monthly: dict, ym: str, *, export_wh: float, trough_soc: float
+    monthly: dict, ym: str, *, export_wh: float, trough_soc: float, params: BacktestParams
 ) -> None:
     """Record one night's economics using the SoC-trough metric.
 
@@ -164,20 +200,20 @@ def accum_night(
     export is not blamed on the export decision). The 'perfect' benchmark exports
     down to the SOFT floor (hard floor + margin), leaving a cushion.
     """
-    hard_pct = HARD_FLOOR_FRAC * 100.0
-    soft_pct = SOFT_FLOOR_FRAC * 100.0
+    hard_pct = params.hard_floor_frac * 100.0
+    soft_pct = params.soft_floor_frac * 100.0
 
-    sim_trough  = trough_soc - (export_wh / BATTERY_WH) * 100.0
-    base_breach = max(0.0, (hard_pct - trough_soc) / 100.0 * BATTERY_WH)   # unavoidable, no-export
-    sim_breach  = max(0.0, (hard_pct - sim_trough) / 100.0 * BATTERY_WH)
-    shortfall_wh = max(0.0, sim_breach - base_breach)                      # export-caused only
+    sim_trough  = trough_soc - (export_wh / params.battery_wh) * 100.0
+    base_breach = max(0.0, (hard_pct - trough_soc) / 100.0 * params.battery_wh)  # unavoidable, no-export
+    sim_breach  = max(0.0, (hard_pct - sim_trough) / 100.0 * params.battery_wh)
+    shortfall_wh = max(0.0, sim_breach - base_breach)                            # export-caused only
 
-    perfect_export = max(0.0, (trough_soc - soft_pct) / 100.0 * BATTERY_WH)
+    perfect_export = max(0.0, (trough_soc - soft_pct) / 100.0 * params.battery_wh)
 
-    revenue        = (export_wh / 1000) * EXPORT_RATE
-    shortfall_cost = (shortfall_wh / 1000) * BUYBACK_RATE
-    opportunity    = max(0.0, (perfect_export - export_wh) / 1000) * EXPORT_RATE
-    perfect_net    = (perfect_export / 1000) * EXPORT_RATE
+    revenue        = (export_wh / 1000) * params.export_rate
+    shortfall_cost = (shortfall_wh / 1000) * params.buyback_rate
+    opportunity    = max(0.0, (perfect_export - export_wh) / 1000) * params.export_rate
+    perfect_net    = (perfect_export / 1000) * params.export_rate
 
     monthly[ym]["revenue"]     += revenue
     monthly[ym]["shortfall"]   += shortfall_cost
@@ -192,7 +228,8 @@ def ensure_month(monthly: dict, ym: str) -> None:
 
 
 def run_model_scenario(
-    rows: dict, cfg, seasonal: bool, confidence_fn=None, start: date | None = None
+    rows: dict, cfg: Config, params: BacktestParams, seasonal: bool, confidence_fn=None,
+    start: date | None = None,
 ) -> dict[str, dict]:
     """Model-based scenario (full-charge SoC, fixed P90 or seasonal Px).
 
@@ -200,13 +237,13 @@ def run_model_scenario(
     overriding the seasonal/fixed logic.
     """
     monthly: dict[str, dict] = {}
-    d = start or BACKTEST_START
-    while d <= BACKTEST_END:
+    d = start or params.start
+    while d <= params.end:
         ds = d.isoformat()
         ym = ds[:7]
         ensure_month(monthly, ym)
 
-        in_absence  = cfg.is_absence(d)
+        in_absence  = params.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None:
@@ -233,22 +270,23 @@ def run_model_scenario(
         accum_night(
             monthly, ym,
             export_wh=result.safe_export_wh,
-            trough_soc=baseline_trough_soc(row, soc),
+            trough_soc=baseline_trough_soc(row, soc, params),
+            params=params,
         )
         d += timedelta(days=1)
     return monthly
 
 
 def run_rolling_scenario(
-    rows: dict, cfg: Config, window: int, start: date | None = None
+    rows: dict, params: BacktestParams, window: int, start: date | None = None
 ) -> dict[str, dict]:
     """Baseline: rolling N-day average consumption as the estimated need."""
     monthly: dict[str, dict] = {}
     date_set = set(rows.keys())
     recent: deque[float] = deque()
 
-    d = start or BACKTEST_START
-    while d <= BACKTEST_END:
+    d = start or params.start
+    while d <= params.end:
         ds = d.isoformat()
         ym = ds[:7]
         ensure_month(monthly, ym)
@@ -256,13 +294,13 @@ def run_rolling_scenario(
         # Rebuild rolling window: last `window` valid non-gap days before d
         recent.clear()
         check = d - timedelta(days=1)
-        while len(recent) < window and check >= (start or BACKTEST_START) - timedelta(days=window * 2):
+        while len(recent) < window and check >= (start or params.start) - timedelta(days=window * 2):
             cs = check.isoformat()
             if cs in date_set:
                 recent.appendleft(rows[cs]["consumption_wh"])
             check -= timedelta(days=1)
 
-        in_absence  = cfg.is_absence(d)
+        in_absence  = params.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None or len(recent) == 0:
@@ -272,19 +310,22 @@ def run_rolling_scenario(
 
         avg_consumption_wh = sum(recent) / len(recent)
         soc        = adjusted_soc(row)
-        battery_wh = soc / 100.0 * BATTERY_WH
-        min_soc_wh = HARD_FLOOR_FRAC * BATTERY_WH
+        battery_wh = soc / 100.0 * params.battery_wh
+        min_soc_wh = params.hard_floor_frac * params.battery_wh
         avail_wh   = max(0.0, battery_wh - min_soc_wh)
         export_wh  = max(0.0, avail_wh - avg_consumption_wh)
 
-        accum_night(monthly, ym, export_wh=export_wh, trough_soc=baseline_trough_soc(row, soc))
+        accum_night(
+            monthly, ym, export_wh=export_wh,
+            trough_soc=baseline_trough_soc(row, soc, params), params=params,
+        )
         d += timedelta(days=1)
     return monthly
 
 
 def run_blended_scenario(
-    rows: dict, cfg, alpha: float, scale_buffer: bool, confidence: float = 0.90,
-    start: date | None = None,
+    rows: dict, cfg: Config, params: BacktestParams, alpha: float, scale_buffer: bool,
+    confidence: float = 0.90, start: date | None = None,
 ) -> dict[str, dict]:
     """Blended scenario: consumption = alpha * model + (1-alpha) * 3-day rolling average.
 
@@ -295,8 +336,8 @@ def run_blended_scenario(
     monthly: dict[str, dict] = {}
     date_set = set(rows.keys())
 
-    d = start or BACKTEST_START
-    while d <= BACKTEST_END:
+    d = start or params.start
+    while d <= params.end:
         ds = d.isoformat()
         ym = ds[:7]
         ensure_month(monthly, ym)
@@ -304,13 +345,13 @@ def run_blended_scenario(
         # Build 3-day rolling window of actual consumption before d
         recent: list[float] = []
         check = d - timedelta(days=1)
-        while len(recent) < 3 and check >= (start or BACKTEST_START) - timedelta(days=6):
+        while len(recent) < 3 and check >= (start or params.start) - timedelta(days=6):
             cs = check.isoformat()
             if cs in date_set:
                 recent.append(rows[cs]["consumption_wh"])
             check -= timedelta(days=1)
 
-        in_absence  = cfg.is_absence(d)
+        in_absence  = params.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None or len(recent) == 0:
@@ -341,24 +382,25 @@ def run_blended_scenario(
         accum_night(
             monthly, ym,
             export_wh=export_wh,
-            trough_soc=baseline_trough_soc(row, adjusted_soc(row)),
+            trough_soc=baseline_trough_soc(row, adjusted_soc(row), params),
+            params=params,
         )
         d += timedelta(days=1)
     return monthly
 
 
 def run_seasonal_fixed_scenario(
-    rows: dict, cfg: Config, seasonal_medians: dict[str, float], start: date | None = None
+    rows: dict, params: BacktestParams, seasonal_medians: dict[str, float], start: date | None = None
 ) -> dict[str, dict]:
     """Baseline: seasonal fixed median consumption as the estimated need."""
     monthly: dict[str, dict] = {}
-    d = start or BACKTEST_START
-    while d <= BACKTEST_END:
+    d = start or params.start
+    while d <= params.end:
         ds = d.isoformat()
         ym = ds[:7]
         ensure_month(monthly, ym)
 
-        in_absence  = cfg.is_absence(d)
+        in_absence  = params.is_absence(d)
         lookup_date = (d - timedelta(days=365)).isoformat() if in_absence else ds
         row = rows.get(lookup_date)
         if row is None:
@@ -368,12 +410,15 @@ def run_seasonal_fixed_scenario(
 
         fixed_wh  = seasonal_medians[season(d)]
         soc       = adjusted_soc(row)
-        battery_wh = soc / 100.0 * BATTERY_WH
-        min_soc_wh = HARD_FLOOR_FRAC * BATTERY_WH
+        battery_wh = soc / 100.0 * params.battery_wh
+        min_soc_wh = params.hard_floor_frac * params.battery_wh
         avail_wh   = max(0.0, battery_wh - min_soc_wh)
         export_wh  = max(0.0, avail_wh - fixed_wh)
 
-        accum_night(monthly, ym, export_wh=export_wh, trough_soc=baseline_trough_soc(row, soc))
+        accum_night(
+            monthly, ym, export_wh=export_wh,
+            trough_soc=baseline_trough_soc(row, soc, params), params=params,
+        )
         d += timedelta(days=1)
     return monthly
 
@@ -480,7 +525,7 @@ def _recent_summary_rows(results: dict, label: str, nights_warn: int) -> str:
     return "".join(rows_html)
 
 
-def consumption_accuracy_series(rows: dict, cfg) -> list[dict]:
+def consumption_accuracy_series(rows: dict, cfg: Config, params: BacktestParams) -> list[dict]:
     """Per-night predicted vs actual consumption over the backtest window.
 
     Predicted = the model's central (P50) consumption estimate, so it's a
@@ -490,11 +535,11 @@ def consumption_accuracy_series(rows: dict, cfg) -> list[dict]:
     skipped (their consumption is unrepresentative).
     """
     series = []
-    d = BACKTEST_START
-    while d <= BACKTEST_END:
+    d = params.start
+    while d <= params.end:
         ds = d.isoformat()
         row = rows.get(ds)
-        if row is not None and not cfg.is_absence(d):
+        if row is not None and not params.is_absence(d):
             inp = PredictInputs(
                 soc_at_6pm=row["soc_at_6pm"],
                 bom_temp_mean=row["bom_temp_mean"],
@@ -568,7 +613,7 @@ def _residual_svg(series: list[dict], roll: int = 14) -> str:
 
 def build_html(
     results: dict, recent_14: dict, recent_30: dict, accuracy: list[dict],
-    cfg: Config, seasonal_medians: dict[str, float],
+    params: BacktestParams, seasonal_medians: dict[str, float],
 ) -> str:
     months = sorted(next(iter(results.values())).keys())
     cell_class = _cell_class
@@ -577,11 +622,11 @@ def build_html(
     # the prior-year absence proxy (window ∩ any configured absence period). When this
     # hits 0 the rolling window has moved past all absence periods and the proxy
     # handling can be retired.
-    months_span = (BACKTEST_END.year - BACKTEST_START.year) * 12 + (BACKTEST_END.month - BACKTEST_START.month)
+    months_span = (params.end.year - params.start.year) * 12 + (params.end.month - params.start.month)
     proxied_days = 0
-    for p in cfg.absence_periods:
-        ov_start = max(BACKTEST_START, p.start)
-        ov_end   = min(BACKTEST_END, p.end)
+    for p in params.absence_periods:
+        ov_start = max(params.start, p.start)
+        ov_end   = min(params.end, p.end)
         if ov_start <= ov_end:
             proxied_days += (ov_end - ov_start).days + 1
 
@@ -709,7 +754,7 @@ def build_html(
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Safe Export Backtest — {BACKTEST_START} to {BACKTEST_END}</title>
+<title>Safe Export Backtest — {params.start} to {params.end}</title>
 <style>
   body {{ font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }}
   h1 {{ font-size: 1.4rem; margin-bottom: 0.25rem; }}
@@ -742,8 +787,8 @@ def build_html(
 </head>
 <body>
 <h1>Safe Export Backtest</h1>
-<p class="subtitle">{BACKTEST_START} to {BACKTEST_END} &nbsp;|&nbsp; {months_span} months &nbsp;|&nbsp; Absence period: {proxied_days} days proxied (prior-year) &nbsp;|&nbsp; All scenarios: full-charge SoC</p>
-<p class="rates">Export rate: <strong>${cfg.backtest.export_rate_per_kwh:.2f}/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>${cfg.backtest.buyback_rate_per_kwh:.2f}/kWh</strong></p>
+<p class="subtitle">{params.start} to {params.end} &nbsp;|&nbsp; {months_span} months &nbsp;|&nbsp; Absence period: {proxied_days} days proxied (prior-year) &nbsp;|&nbsp; All scenarios: full-charge SoC</p>
+<p class="rates">Export rate: <strong>${params.export_rate:.2f}/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>${params.buyback_rate:.2f}/kWh</strong></p>
 
 <div class="summary-section recent-section">
   <h2>Recent performance &mdash; last 14 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(small sample &mdash; treat as directional only)</span></h2>
@@ -835,103 +880,97 @@ def main() -> None:
     cfg  = load_config(Path("config/config.yaml"))
     rows = load_rows(DB_PATH)
 
-    # Drive battery capacity + discharge floor from config (not hardcoded), so the
-    # backtest's evaluation floor matches what predict() assumes for its decisions.
-    global BATTERY_WH, HARD_FLOOR_FRAC, SOFT_FLOOR_FRAC, BACKTEST_START, BACKTEST_END
-    global EXPORT_RATE, BUYBACK_RATE
-    BATTERY_WH      = cfg.battery_capacity_wh
-    HARD_FLOOR_FRAC = cfg.battery_reserve_fraction
-    SOFT_FLOOR_FRAC = HARD_FLOOR_FRAC + SOFT_FLOOR_MARGIN
-    EXPORT_RATE     = cfg.backtest.export_rate_per_kwh
-    BUYBACK_RATE    = cfg.backtest.buyback_rate_per_kwh
-
     # Rolling 12-month window anchored to the dataset's last available date, so the
     # backtest window stays a consistent 12 months instead of creeping as data grows.
-    BACKTEST_END   = last_dataset_date(DB_PATH)
-    BACKTEST_START = one_year_before(BACKTEST_END)
+    backtest_end   = last_dataset_date(DB_PATH)
+    backtest_start = one_year_before(backtest_end)
 
-    seasonal_medians = compute_seasonal_medians(rows, cfg)
+    # Derive evaluation params from config (not hardcoded), so the backtest's
+    # capacity/floor matches what predict() assumes for its decisions.
+    params = BacktestParams.from_config(cfg, start=backtest_start, end=backtest_end)
+
+    seasonal_medians = compute_seasonal_medians(rows, params)
 
     results = {}
 
     print("Running scenario A: Model — full-charge SoC, fixed P90...")
-    results["A"] = run_model_scenario(rows, cfg, seasonal=False)
+    results["A"] = run_model_scenario(rows, cfg, params, seasonal=False)
 
     print("Running scenario B: Model — full-charge SoC, seasonal Px...")
-    results["B"] = run_model_scenario(rows, cfg, seasonal=True)
+    results["B"] = run_model_scenario(rows, cfg, params, seasonal=True)
 
     print("Running scenario C: Baseline — 3-day rolling average...")
-    results["C"] = run_rolling_scenario(rows, cfg, window=3)
+    results["C"] = run_rolling_scenario(rows, params, window=3)
 
     print("Running scenario D: Baseline — 7-day rolling average...")
-    results["D"] = run_rolling_scenario(rows, cfg, window=7)
+    results["D"] = run_rolling_scenario(rows, params, window=7)
 
     print("Running scenario E: Baseline — seasonal fixed median...")
-    results["E"] = run_seasonal_fixed_scenario(rows, cfg, seasonal_medians)
+    results["E"] = run_seasonal_fixed_scenario(rows, params, seasonal_medians)
 
     print("Running scenario F: Model — full-charge SoC, aggressive seasonal Px...")
-    results["F"] = run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive)
+    results["F"] = run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=seasonal_confidence_aggressive)
 
     print("Running scenario H: Model — full-charge SoC, fixed P75...")
-    results["H"] = run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.75)
+    results["H"] = run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.75)
 
     print("Running scenario G: Model — full-charge SoC, fixed P50...")
-    results["G"] = run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50)
+    results["G"] = run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.50)
 
     print("Running scenario I1: Blended a=0.75, buffer fixed...")
-    results["I1"] = run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False)
+    results["I1"] = run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=False)
     print("Running scenario I2: Blended a=0.75, buffer scaled...")
-    results["I2"] = run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True)
+    results["I2"] = run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=True)
     print("Running scenario I3: Blended a=0.50, buffer fixed...")
-    results["I3"] = run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False)
+    results["I3"] = run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=False)
     print("Running scenario I4: Blended a=0.50, buffer scaled...")
-    results["I4"] = run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=True)
+    results["I4"] = run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=True)
     print("Running scenario I5: Blended a=0.25, buffer fixed...")
-    results["I5"] = run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=False)
+    results["I5"] = run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=False)
     print("Running scenario I6: Blended a=0.25, buffer scaled...")
-    results["I6"] = run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=True)
+    results["I6"] = run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=True)
 
-    start_14 = BACKTEST_END - timedelta(days=13)
-    start_30 = BACKTEST_END - timedelta(days=29)
+    start_14 = backtest_end - timedelta(days=13)
+    start_30 = backtest_end - timedelta(days=29)
 
     print("Running recent 14-day windows...")
     recent_14 = {
-        "A":  run_model_scenario(rows, cfg, seasonal=False, start=start_14),
-        "B":  run_model_scenario(rows, cfg, seasonal=True, start=start_14),
-        "H":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.75, start=start_14),
-        "F":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_14),
-        "G":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50, start=start_14),
-        "C":  run_rolling_scenario(rows, cfg, window=3, start=start_14),
-        "D":  run_rolling_scenario(rows, cfg, window=7, start=start_14),
-        "E":  run_seasonal_fixed_scenario(rows, cfg, seasonal_medians, start=start_14),
-        "I1": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False, start=start_14),
-        "I2": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True, start=start_14),
-        "I3": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False, start=start_14),
-        "I4": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=True, start=start_14),
-        "I5": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=False, start=start_14),
-        "I6": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=True, start=start_14),
+        "A":  run_model_scenario(rows, cfg, params, seasonal=False, start=start_14),
+        "B":  run_model_scenario(rows, cfg, params, seasonal=True, start=start_14),
+        "H":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.75, start=start_14),
+        "F":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_14),
+        "G":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.50, start=start_14),
+        "C":  run_rolling_scenario(rows, params, window=3, start=start_14),
+        "D":  run_rolling_scenario(rows, params, window=7, start=start_14),
+        "E":  run_seasonal_fixed_scenario(rows, params, seasonal_medians, start=start_14),
+        "I1": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=False, start=start_14),
+        "I2": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=True, start=start_14),
+        "I3": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=False, start=start_14),
+        "I4": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=True, start=start_14),
+        "I5": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=False, start=start_14),
+        "I6": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=True, start=start_14),
     }
 
     print("Running recent 30-day windows...")
     recent_30 = {
-        "A":  run_model_scenario(rows, cfg, seasonal=False, start=start_30),
-        "B":  run_model_scenario(rows, cfg, seasonal=True, start=start_30),
-        "H":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.75, start=start_30),
-        "F":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_30),
-        "G":  run_model_scenario(rows, cfg, seasonal=False, confidence_fn=lambda d: 0.50, start=start_30),
-        "C":  run_rolling_scenario(rows, cfg, window=3, start=start_30),
-        "D":  run_rolling_scenario(rows, cfg, window=7, start=start_30),
-        "E":  run_seasonal_fixed_scenario(rows, cfg, seasonal_medians, start=start_30),
-        "I1": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=False, start=start_30),
-        "I2": run_blended_scenario(rows, cfg, alpha=0.75, scale_buffer=True, start=start_30),
-        "I3": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=False, start=start_30),
-        "I4": run_blended_scenario(rows, cfg, alpha=0.50, scale_buffer=True, start=start_30),
-        "I5": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=False, start=start_30),
-        "I6": run_blended_scenario(rows, cfg, alpha=0.25, scale_buffer=True, start=start_30),
+        "A":  run_model_scenario(rows, cfg, params, seasonal=False, start=start_30),
+        "B":  run_model_scenario(rows, cfg, params, seasonal=True, start=start_30),
+        "H":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.75, start=start_30),
+        "F":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_30),
+        "G":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.50, start=start_30),
+        "C":  run_rolling_scenario(rows, params, window=3, start=start_30),
+        "D":  run_rolling_scenario(rows, params, window=7, start=start_30),
+        "E":  run_seasonal_fixed_scenario(rows, params, seasonal_medians, start=start_30),
+        "I1": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=False, start=start_30),
+        "I2": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=True, start=start_30),
+        "I3": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=False, start=start_30),
+        "I4": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=True, start=start_30),
+        "I5": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=False, start=start_30),
+        "I6": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=True, start=start_30),
     }
 
-    accuracy = consumption_accuracy_series(rows, cfg)
-    html = build_html(results, recent_14, recent_30, accuracy, cfg, seasonal_medians)
+    accuracy = consumption_accuracy_series(rows, cfg, params)
+    html = build_html(results, recent_14, recent_30, accuracy, params, seasonal_medians)
     html_path = Path("tools/backtest_report.html")
     html_path.write_text(html, encoding="utf-8")
     print(f"Report written to {html_path}")
