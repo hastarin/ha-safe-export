@@ -324,6 +324,11 @@ def _extract_all_inner(
     rebuild: bool,
     from_date: date | None,
 ) -> None:
+    # Validate all configured sensors exist in the HA DB *before* dropping anything —
+    # a missing/renamed sensor must not destroy an existing dataset on --rebuild.
+    # See docs/DECISIONS.md "Validate sensors before --rebuild drops tables".
+    ids = _get_metadata_ids(ha, cfg)
+
     schema_sql = (Path(__file__).parent / "schema.sql").read_text()
 
     if rebuild:
@@ -333,8 +338,6 @@ def _extract_all_inner(
         )
 
     ds.executescript(schema_sql)
-
-    ids = _get_metadata_ids(ha, cfg)
 
     if from_date is not None:
         start = from_date

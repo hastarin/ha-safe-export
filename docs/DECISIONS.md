@@ -67,6 +67,15 @@ Each entry has the form:
 
 ---
 
+### Validate sensors before `--rebuild` drops tables
+
+**Decision:** `extract_all` calls `_get_metadata_ids` (which raises `ValueError` if a required sensor is absent from the HA DB) _before_ the `--rebuild` path drops `daily_observations`/`extraction_meta`, not after.
+**Status:** Locked.
+
+**Rationale:** `ds.executescript` issues an implicit commit, so the old ordering meant a rebuild against a config with a renamed/missing sensor destroyed the existing dataset before the validation error was ever raised — turning a config typo into a lost dataset (recoverable only by a full re-extraction against the HA DB). Reordering costs nothing (`_get_metadata_ids` only touches the read-only HA connection) and makes a failed `--rebuild` leave the previous dataset intact. This does not make extraction fully atomic against a crash mid-run — only against the specific failure mode of an invalid config being caught before any damage is done.
+
+---
+
 ## Window definition
 
 ### 6pm-prior to 11am-current local time, 17 hours

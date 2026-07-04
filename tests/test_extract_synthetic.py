@@ -13,7 +13,7 @@ conftest.py, so nobody mistakes this for real installation data.
 
 import logging
 import sqlite3
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -564,6 +564,45 @@ def test_extract_all_rebuild_drops_and_reextracts(tmp_path):
         }
     assert set(rows) == {day1.isoformat(), day2.isoformat()}
     assert rows[day1.isoformat()] != -999999  # re-extracted, not left stale
+
+
+def test_extract_all_rebuild_with_missing_sensor_preserves_existing_dataset(tmp_path):
+    """T1.2: --rebuild against a config naming a sensor absent from the HA DB must
+    raise ValueError *and* leave the existing dataset untouched — not drop the
+    tables first and raise after (see docs/DECISIONS.md "Validate sensors before
+    --rebuild drops tables").
+    """
+    # Anchored to "yesterday" so from_date's upper bound (the real yesterday)
+    # caps the extraction at exactly this one day.
+    day1 = datetime.now(TZ).date() - timedelta(days=1)
+
+    ha_path = tmp_path / "ha.db"
+    conn = make_ha_db(ha_path)
+    ids = {key: register(conn, statistic_id) for key, statistic_id in REQUIRED_SENSOR_IDS.items()}
+    _seed_minimal_day(conn, ids, day1)
+    conn.commit()
+    conn.close()
+
+    cfg = make_cfg()
+    dataset_db = tmp_path / "dataset.db"
+
+    extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=cfg, from_date=day1)
+    with sqlite3.connect(dataset_db) as ds:
+        before = list(ds.execute("SELECT * FROM daily_observations"))
+    assert len(before) == 1
+
+    # A config naming a required sensor not registered in this HA DB.
+    bad_cfg = replace(
+        cfg,
+        sensors=replace(cfg.sensors, outdoor_temp="sensor.does_not_exist_in_ha_db"),
+    )
+
+    with pytest.raises(ValueError, match="does_not_exist_in_ha_db"):
+        extract_all(ha_db=ha_path, dataset_db=dataset_db, cfg=bad_cfg, rebuild=True)
+
+    with sqlite3.connect(dataset_db) as ds:
+        after = list(ds.execute("SELECT * FROM daily_observations"))
+    assert after == before
 
 
 def test_extract_all_up_to_date_returns_without_error(tmp_path):
