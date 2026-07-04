@@ -282,3 +282,41 @@ def test_capture_over_100_percent():
     assert text == "150.0%"
     assert cls == "eff-high"
     assert sort == pytest.approx(150.0)
+
+
+# ---------------------------------------------------------------------------
+# build_registry() — scenario dispatch table (issue #38)
+# ---------------------------------------------------------------------------
+
+EXPECTED_SCENARIO_ORDER = [
+    "A", "B", "H", "F", "G", "C", "D", "E", "I1", "I2", "I3", "I4", "I5", "I6",
+]
+EXPECTED_MODEL_KEYS = {"A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6"}
+
+
+@pytest.fixture
+def seasonal_medians() -> dict[str, float]:
+    return {"winter": 8000.0, "shoulder": 6000.0, "summer": 5000.0}
+
+
+def test_build_registry_keys_are_unique_and_in_render_order(test_cfg, seasonal_medians):
+    registry = bt.build_registry(test_cfg, seasonal_medians)
+    keys = [s.key for s in registry]
+    assert keys == EXPECTED_SCENARIO_ORDER
+    assert len(set(keys)) == len(keys)
+
+
+def test_build_registry_is_model_matches_expected_set(test_cfg, seasonal_medians):
+    # is_model lives on each Scenario now, replacing the model-key tuple that
+    # used to be repeated (and could drift) across three separate places.
+    registry = bt.build_registry(test_cfg, seasonal_medians)
+    model_keys = {s.key for s in registry if s.is_model}
+    baseline_keys = {s.key for s in registry if not s.is_model}
+    assert model_keys == EXPECTED_MODEL_KEYS
+    assert baseline_keys == {"C", "D", "E"}
+
+
+def test_build_registry_season_tags_only_on_b_f_e(test_cfg, seasonal_medians):
+    registry = bt.build_registry(test_cfg, seasonal_medians)
+    tagged = {s.key for s in registry if s.season_tag is not None}
+    assert tagged == {"B", "F", "E"}

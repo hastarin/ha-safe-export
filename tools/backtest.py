@@ -29,6 +29,7 @@ import argparse
 import json
 import sqlite3
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -431,23 +432,6 @@ def run_seasonal_fixed_scenario(
     return monthly
 
 
-SCENARIOS = [
-    ("A", "Model — full-charge SoC, fixed P90"),
-    ("B", "Model — full-charge SoC, seasonal Px (P95/P90/P75)"),
-    ("H", "Model — full-charge SoC, fixed P75"),
-    ("F", "Model — full-charge SoC, aggressive seasonal Px (P95/P75/P50)"),
-    ("G", "Model — full-charge SoC, fixed P50"),
-    ("C", "Baseline — 3-day rolling average"),
-    ("D", "Baseline — 7-day rolling average"),
-    ("E", "Baseline — seasonal fixed median"),
-    ("I1", "Blended α=0.75 — 75% model + 25% 3-day avg, buffer fixed"),
-    ("I2", "Blended α=0.75 — 75% model + 25% 3-day avg, buffer scaled"),
-    ("I3", "Blended α=0.50 — 50% model + 50% 3-day avg, buffer fixed"),
-    ("I4", "Blended α=0.50 — 50% model + 50% 3-day avg, buffer scaled"),
-    ("I5", "Blended α=0.25 — 25% model + 75% 3-day avg, buffer fixed"),
-    ("I6", "Blended α=0.25 — 25% model + 75% 3-day avg, buffer scaled"),
-]
-
 MONTH_NAMES = {
     "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr",
     "05": "May", "06": "Jun", "07": "Jul", "08": "Aug",
@@ -477,6 +461,85 @@ def seasonal_fixed_label(mon: str, seasonal_medians: dict[str, float]) -> str:
     return f"{s.capitalize()} {seasonal_medians[s] / 1000:.1f}kWh"
 
 
+MonthlyResult = dict[str, dict]
+ScenarioRunner = Callable[[dict, BacktestParams, date | None], MonthlyResult]
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """One registry entry: everything needed to run a scenario over any window
+    and render its badge/season-tag. `is_model` replaces the separate
+    model-key tuple that used to be repeated (and could drift) across the
+    scenario table, the summary table, and the recent-window summary.
+    """
+    key: str
+    label: str
+    is_model: bool
+    run: ScenarioRunner
+    season_tag: Callable[[str], str | None] | None = None
+
+
+def _model_runner(cfg: Config, *, seasonal: bool = False, confidence_fn=None) -> ScenarioRunner:
+    def run(rows: dict, params: BacktestParams, start: date | None = None) -> MonthlyResult:
+        return run_model_scenario(rows, cfg, params, seasonal, confidence_fn=confidence_fn, start=start)
+    return run
+
+
+def _rolling_runner(window: int) -> ScenarioRunner:
+    def run(rows: dict, params: BacktestParams, start: date | None = None) -> MonthlyResult:
+        return run_rolling_scenario(rows, params, window, start=start)
+    return run
+
+
+def _blended_runner(cfg: Config, alpha: float, scale_buffer: bool) -> ScenarioRunner:
+    def run(rows: dict, params: BacktestParams, start: date | None = None) -> MonthlyResult:
+        return run_blended_scenario(rows, cfg, params, alpha, scale_buffer, start=start)
+    return run
+
+
+def _seasonal_fixed_runner(seasonal_medians: dict[str, float]) -> ScenarioRunner:
+    def run(rows: dict, params: BacktestParams, start: date | None = None) -> MonthlyResult:
+        return run_seasonal_fixed_scenario(rows, params, seasonal_medians, start=start)
+    return run
+
+
+def build_registry(cfg: Config, seasonal_medians: dict[str, float]) -> list[Scenario]:
+    """The 14-scenario dispatch table. Drives all three backtest windows (full,
+    recent-14, recent-30) and all badge/label/season-tag rendering — adding a
+    scenario is a single edit here. Order is the order scenarios render in.
+    """
+    return [
+        Scenario("A", "Model — full-charge SoC, fixed P90", True,
+                 _model_runner(cfg)),
+        Scenario("B", "Model — full-charge SoC, seasonal Px (P95/P90/P75)", True,
+                 _model_runner(cfg, seasonal=True), season_tag=SEASON_LABEL.get),
+        Scenario("H", "Model — full-charge SoC, fixed P75", True,
+                 _model_runner(cfg, confidence_fn=lambda d: 0.75)),
+        Scenario("F", "Model — full-charge SoC, aggressive seasonal Px (P95/P75/P50)", True,
+                 _model_runner(cfg, confidence_fn=seasonal_confidence_aggressive),
+                 season_tag=lambda mon: SEASON_LABEL_AGGRESSIVE.get(mon, "Shoulder P75")),
+        Scenario("G", "Model — full-charge SoC, fixed P50", True,
+                 _model_runner(cfg, confidence_fn=lambda d: 0.50)),
+        Scenario("C", "Baseline — 3-day rolling average", False, _rolling_runner(3)),
+        Scenario("D", "Baseline — 7-day rolling average", False, _rolling_runner(7)),
+        Scenario("E", "Baseline — seasonal fixed median", False,
+                 _seasonal_fixed_runner(seasonal_medians),
+                 season_tag=lambda mon: seasonal_fixed_label(mon, seasonal_medians)),
+        Scenario("I1", "Blended α=0.75 — 75% model + 25% 3-day avg, buffer fixed", True,
+                 _blended_runner(cfg, 0.75, False)),
+        Scenario("I2", "Blended α=0.75 — 75% model + 25% 3-day avg, buffer scaled", True,
+                 _blended_runner(cfg, 0.75, True)),
+        Scenario("I3", "Blended α=0.50 — 50% model + 50% 3-day avg, buffer fixed", True,
+                 _blended_runner(cfg, 0.50, False)),
+        Scenario("I4", "Blended α=0.50 — 50% model + 50% 3-day avg, buffer scaled", True,
+                 _blended_runner(cfg, 0.50, True)),
+        Scenario("I5", "Blended α=0.25 — 25% model + 75% 3-day avg, buffer fixed", True,
+                 _blended_runner(cfg, 0.25, False)),
+        Scenario("I6", "Blended α=0.25 — 25% model + 75% 3-day avg, buffer scaled", True,
+                 _blended_runner(cfg, 0.25, True)),
+    ]
+
+
 def _capture(net: float, perfect_net: float) -> tuple[str, str, float]:
     """Net-capture cell as (display_text, css_class, sort_value).
 
@@ -500,25 +563,25 @@ def _cell_class(val: float) -> str:
     return ""
 
 
-def _recent_summary_rows(results: dict, nights_warn: int) -> str:
+def _recent_summary_rows(results: dict, scenarios: list[Scenario], nights_warn: int) -> str:
     """Return HTML rows for a recent-window summary table (all scenarios, single aggregated row each)."""
     rows_html = []
 
     computed = []
-    for key, desc in SCENARIOS:
-        m_data = results[key]
+    for s in scenarios:
+        m_data = results[s.key]
         tot_rev   = sum(m["revenue"]     for m in m_data.values())
         tot_short = sum(m["shortfall"]   for m in m_data.values())
         tot_perf  = sum(m["perfect_net"] for m in m_data.values())
         tot_nights = sum(m["nights"]     for m in m_data.values())
         net = tot_rev - tot_short
         cap_text, cap_cls, cap_sort = _capture(net, tot_perf)
-        computed.append((cap_sort, cap_text, cap_cls, key, desc, tot_rev, tot_short, tot_perf, net, tot_nights))
+        computed.append((cap_sort, cap_text, cap_cls, s.key, s.label, s.is_model,
+                         tot_rev, tot_short, tot_perf, net, tot_nights))
 
     computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
 
-    for cap_sort, cap_text, cap_cls, key, desc, tot_rev, tot_short, tot_perf, net, tot_nights in computed:
-        is_model = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
+    for cap_sort, cap_text, cap_cls, key, desc, is_model, tot_rev, tot_short, tot_perf, net, tot_nights in computed:
         badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
         warn = f' <span class="skipped">(n={tot_nights})</span>' if tot_nights <= nights_warn else f' <span style="color:#555;font-size:0.8rem">(n={tot_nights})</span>'
         rows_html.append(f"""
@@ -621,7 +684,7 @@ def _residual_svg(series: list[dict], roll: int = 14) -> str:
 
 def build_html(
     results: dict, recent_14: dict, recent_30: dict, accuracy: list[dict],
-    params: BacktestParams, seasonal_medians: dict[str, float],
+    params: BacktestParams, seasonal_medians: dict[str, float], scenarios: list[Scenario],
 ) -> str:
     months = sorted(next(iter(results.values())).keys())
     cell_class = _cell_class
@@ -660,9 +723,8 @@ def build_html(
 </div>"""
 
     scenario_tables = []
-    for key, label in SCENARIOS:
-        m_data   = results[key]
-        is_model = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
+    for s in scenarios:
+        m_data   = results[s.key]
         rows_html = []
         tot = dict(revenue=0.0, shortfall=0.0, opportunity=0.0, perfect_net=0.0, nights=0)
 
@@ -672,22 +734,16 @@ def build_html(
             net         = m["revenue"] - m["shortfall"]
             cap_text, cap_cls, _ = _capture(net, m["perfect_net"])
 
-            season_tag = ""
-            if key == "B":
-                lbl = SEASON_LABEL.get(mon)
+            season_tag_html = ""
+            if s.season_tag:
+                lbl = s.season_tag(mon)
                 if lbl:
-                    season_tag = f'<span class="season-tag">{lbl}</span>'
-            elif key == "F":
-                sl = SEASON_LABEL_AGGRESSIVE.get(mon, "Shoulder P75")
-                season_tag = f'<span class="season-tag">{sl}</span>'
-            elif key == "E":
-                sl = seasonal_fixed_label(mon, seasonal_medians)
-                season_tag = f'<span class="season-tag">{sl}</span>'
+                    season_tag_html = f'<span class="season-tag">{lbl}</span>'
 
             skipped = f'<span class="skipped"> ({m["skipped"]} skipped)</span>' if m.get("skipped") else ""
             rows_html.append(f"""
               <tr>
-                <td>{MONTH_NAMES[mon]} {ym[:4]}{season_tag}</td>
+                <td>{MONTH_NAMES[mon]} {ym[:4]}{season_tag_html}</td>
                 <td>{m['nights']}{skipped}</td>
                 <td class="num">${m['revenue']:.2f}</td>
                 <td class="num neg2">-${m['shortfall']:.2f}</td>
@@ -700,10 +756,10 @@ def build_html(
 
         tot_net = tot["revenue"] - tot["shortfall"]
         tot_cap_text, tot_cap_cls, _ = _capture(tot_net, tot["perfect_net"])
-        badge   = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
+        badge   = '<span class="model-badge">model</span>' if s.is_model else '<span class="baseline-badge">baseline</span>'
         scenario_tables.append(f"""
         <section>
-          <h2>Scenario {key}: {label} {badge}</h2>
+          <h2>Scenario {s.key}: {s.label} {badge}</h2>
           <table>
             <thead>
               <tr>
@@ -731,16 +787,15 @@ def build_html(
     # Summary comparison table — winter (Jun–Aug) excluded as loss-making in all scenarios.
     # Sorted by net capture descending.
     summary_computed = []
-    for key, label in SCENARIOS:
-        m_data          = results[key]
-        is_model        = key in ("A", "B", "F", "G", "H", "I1", "I2", "I3", "I4", "I5", "I6")
+    for s in scenarios:
+        m_data          = results[s.key]
         non_winter      = {ym: m for ym, m in m_data.items() if ym[5:7] not in ("06", "07", "08")}
         tot_rev         = sum(m["revenue"]     for m in non_winter.values())
         tot_short       = sum(m["shortfall"]   for m in non_winter.values())
         tot_perfect_net = sum(m["perfect_net"] for m in non_winter.values())
         tot_net         = tot_rev - tot_short
         cap_text, cap_cls, cap_sort = _capture(tot_net, tot_perfect_net)
-        summary_computed.append((cap_sort, cap_text, cap_cls, key, label, is_model,
+        summary_computed.append((cap_sort, cap_text, cap_cls, s.key, s.label, s.is_model,
                                  tot_rev, tot_short, tot_perfect_net, tot_net))
 
     summary_computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
@@ -804,7 +859,7 @@ def build_html(
     <thead>
       <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
     </thead>
-    <tbody>{_recent_summary_rows(recent_14, nights_warn=14)}</tbody>
+    <tbody>{_recent_summary_rows(recent_14, scenarios, nights_warn=14)}</tbody>
   </table>
 </div>
 
@@ -814,7 +869,7 @@ def build_html(
     <thead>
       <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
     </thead>
-    <tbody>{_recent_summary_rows(recent_30, nights_warn=20)}</tbody>
+    <tbody>{_recent_summary_rows(recent_30, scenarios, nights_warn=20)}</tbody>
   </table>
 </div>
 {accuracy_section}
@@ -846,10 +901,11 @@ def build_html(
 </html>"""
 
 
-def build_json(results: dict) -> dict:
+def build_json(results: dict, scenarios: list[Scenario]) -> dict:
     """Build a summary dict suitable for JSON output."""
     output = {}
-    for key, label in SCENARIOS:
+    for s in scenarios:
+        key, label = s.key, s.label
         m_data          = results[key]
         tot_rev         = sum(m["revenue"]     for m in m_data.values())
         tot_short       = sum(m["shortfall"]   for m in m_data.values())
@@ -915,93 +971,30 @@ def main() -> None:
     params = BacktestParams.from_config(cfg, start=backtest_start, end=backtest_end)
 
     seasonal_medians = compute_seasonal_medians(rows, params)
+    registry = build_registry(cfg, seasonal_medians)
 
     results = {}
-
-    print("Running scenario A: Model — full-charge SoC, fixed P90...")
-    results["A"] = run_model_scenario(rows, cfg, params, seasonal=False)
-
-    print("Running scenario B: Model — full-charge SoC, seasonal Px...")
-    results["B"] = run_model_scenario(rows, cfg, params, seasonal=True)
-
-    print("Running scenario C: Baseline — 3-day rolling average...")
-    results["C"] = run_rolling_scenario(rows, params, window=3)
-
-    print("Running scenario D: Baseline — 7-day rolling average...")
-    results["D"] = run_rolling_scenario(rows, params, window=7)
-
-    print("Running scenario E: Baseline — seasonal fixed median...")
-    results["E"] = run_seasonal_fixed_scenario(rows, params, seasonal_medians)
-
-    print("Running scenario F: Model — full-charge SoC, aggressive seasonal Px...")
-    results["F"] = run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=seasonal_confidence_aggressive)
-
-    print("Running scenario H: Model — full-charge SoC, fixed P75...")
-    results["H"] = run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.75)
-
-    print("Running scenario G: Model — full-charge SoC, fixed P50...")
-    results["G"] = run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.50)
-
-    print("Running scenario I1: Blended a=0.75, buffer fixed...")
-    results["I1"] = run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=False)
-    print("Running scenario I2: Blended a=0.75, buffer scaled...")
-    results["I2"] = run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=True)
-    print("Running scenario I3: Blended a=0.50, buffer fixed...")
-    results["I3"] = run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=False)
-    print("Running scenario I4: Blended a=0.50, buffer scaled...")
-    results["I4"] = run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=True)
-    print("Running scenario I5: Blended a=0.25, buffer fixed...")
-    results["I5"] = run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=False)
-    print("Running scenario I6: Blended a=0.25, buffer scaled...")
-    results["I6"] = run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=True)
+    for s in registry:
+        print(f"Running scenario {s.key}: {s.label}...")
+        results[s.key] = s.run(rows, params)
 
     start_14 = backtest_end - timedelta(days=13)
     start_30 = backtest_end - timedelta(days=29)
 
     print("Running recent 14-day windows...")
-    recent_14 = {
-        "A":  run_model_scenario(rows, cfg, params, seasonal=False, start=start_14),
-        "B":  run_model_scenario(rows, cfg, params, seasonal=True, start=start_14),
-        "H":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.75, start=start_14),
-        "F":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_14),
-        "G":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.50, start=start_14),
-        "C":  run_rolling_scenario(rows, params, window=3, start=start_14),
-        "D":  run_rolling_scenario(rows, params, window=7, start=start_14),
-        "E":  run_seasonal_fixed_scenario(rows, params, seasonal_medians, start=start_14),
-        "I1": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=False, start=start_14),
-        "I2": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=True, start=start_14),
-        "I3": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=False, start=start_14),
-        "I4": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=True, start=start_14),
-        "I5": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=False, start=start_14),
-        "I6": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=True, start=start_14),
-    }
+    recent_14 = {s.key: s.run(rows, params, start=start_14) for s in registry}
 
     print("Running recent 30-day windows...")
-    recent_30 = {
-        "A":  run_model_scenario(rows, cfg, params, seasonal=False, start=start_30),
-        "B":  run_model_scenario(rows, cfg, params, seasonal=True, start=start_30),
-        "H":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.75, start=start_30),
-        "F":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=seasonal_confidence_aggressive, start=start_30),
-        "G":  run_model_scenario(rows, cfg, params, seasonal=False, confidence_fn=lambda d: 0.50, start=start_30),
-        "C":  run_rolling_scenario(rows, params, window=3, start=start_30),
-        "D":  run_rolling_scenario(rows, params, window=7, start=start_30),
-        "E":  run_seasonal_fixed_scenario(rows, params, seasonal_medians, start=start_30),
-        "I1": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=False, start=start_30),
-        "I2": run_blended_scenario(rows, cfg, params, alpha=0.75, scale_buffer=True, start=start_30),
-        "I3": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=False, start=start_30),
-        "I4": run_blended_scenario(rows, cfg, params, alpha=0.50, scale_buffer=True, start=start_30),
-        "I5": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=False, start=start_30),
-        "I6": run_blended_scenario(rows, cfg, params, alpha=0.25, scale_buffer=True, start=start_30),
-    }
+    recent_30 = {s.key: s.run(rows, params, start=start_30) for s in registry}
 
     accuracy = consumption_accuracy_series(rows, cfg, params)
-    html = build_html(results, recent_14, recent_30, accuracy, params, seasonal_medians)
+    html = build_html(results, recent_14, recent_30, accuracy, params, seasonal_medians, registry)
     html_path = Path("tools/backtest_report.html")
     html_path.write_text(html, encoding="utf-8")
     print(f"Report written to {html_path}")
 
     json_path = Path("tools/backtest_report.json")
-    json_path.write_text(json.dumps(build_json(results), indent=2), encoding="utf-8")
+    json_path.write_text(json.dumps(build_json(results, registry), indent=2), encoding="utf-8")
     print(f"JSON written to  {json_path}")
 
 
