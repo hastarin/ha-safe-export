@@ -44,6 +44,16 @@ def _extract_triple(func: str, name: str) -> tuple[float, float, float]:
     return float(m.group(1)), float(m.group(2)), float(m.group(3))
 
 
+def _extract_pair(func: str, name: str) -> tuple[float, float]:
+    """Extract `const NAME = { b0: x, b1: y };`-style pairs (temp-only fallback variants)."""
+    m = re.search(
+        rf"const\s+{name}\s*=\s*\{{\s*b0:\s*({_NUM}),\s*b1:\s*({_NUM})\s*\}}",
+        func,
+    )
+    assert m, f"Could not find `const {name} = {{ b0, b1 }}` in nodered-flow.json"
+    return float(m.group(1)), float(m.group(2))
+
+
 def _extract_scalar(func: str, name: str) -> float:
     m = re.search(rf"const\s+{name}\s*=\s*({_NUM})\s*;", func)
     assert m, f"Could not find `const {name} = ...;` in nodered-flow.json"
@@ -74,15 +84,21 @@ def _flow_coefficients() -> dict[str, float | dict[str, float]]:
     func = _load_flow_func()
     h_b0, h_b1, h_b2 = _extract_triple(func, "H")
     c_b0, c_b1, c_b2 = _extract_triple(func, "C")
+    h_only_b0, h_only_b1 = _extract_pair(func, "H_TEMP_ONLY")
+    c_only_b0, c_only_b1 = _extract_pair(func, "C_TEMP_ONLY")
     return {
         "heating_intercept": h_b0,
         "heating_b_temp": h_b1,
         "heating_b_solcast": h_b2,
         "heating_p95_buffer_kwh": _extract_scalar(func, "H_P95"),
+        "heating_temp_only_intercept": h_only_b0,
+        "heating_temp_only_b_temp": h_only_b1,
         "cooling_intercept": c_b0,
         "cooling_b_temp": c_b1,
         "cooling_b_humidity": c_b2,
         "cooling_p95_buffer_kwh": _extract_scalar(func, "C_P95"),
+        "cooling_temp_only_intercept": c_only_b0,
+        "cooling_temp_only_b_temp": c_only_b1,
         "warm_boundary": dict(
             zip(("p50", "p75", "p90", "p95"), _extract_percentiles(func, "WARM"))
         ),
@@ -100,10 +116,30 @@ def test_nodered_flow_matches_test_cfg(test_cfg):
         ("heating_b_temp", flow["heating_b_temp"], m.heating_b_temp),
         ("heating_b_solcast", flow["heating_b_solcast"], m.heating_b_solcast),
         ("heating_p95_buffer_kwh", flow["heating_p95_buffer_kwh"], m.heating_p95_buffer_kwh),
+        (
+            "heating_temp_only_intercept",
+            flow["heating_temp_only_intercept"],
+            m.heating_temp_only_intercept,
+        ),
+        (
+            "heating_temp_only_b_temp",
+            flow["heating_temp_only_b_temp"],
+            m.heating_temp_only_b_temp,
+        ),
         ("cooling_intercept", flow["cooling_intercept"], m.cooling_intercept),
         ("cooling_b_temp", flow["cooling_b_temp"], m.cooling_b_temp),
         ("cooling_b_humidity", flow["cooling_b_humidity"], m.cooling_b_humidity),
         ("cooling_p95_buffer_kwh", flow["cooling_p95_buffer_kwh"], m.cooling_p95_buffer_kwh),
+        (
+            "cooling_temp_only_intercept",
+            flow["cooling_temp_only_intercept"],
+            m.cooling_temp_only_intercept,
+        ),
+        (
+            "cooling_temp_only_b_temp",
+            flow["cooling_temp_only_b_temp"],
+            m.cooling_temp_only_b_temp,
+        ),
     ]
     for key, flow_val, cfg_val in scalar_pairs:
         assert flow_val == cfg_val, (
@@ -139,13 +175,14 @@ def test_nodered_flow_conf_ladder_matches_model_py():
 
 def test_nodered_flow_consumption_floor_matches_model_py():
     func = _load_flow_func()
-    matches = re.findall(r"Math\.max\(\s*(" + _NUM + r")\s*,\s*baseConsumption\s*\)", func)
-    assert matches, 'Could not find `Math.max(N, baseConsumption)` clamp in nodered-flow.json'
-    for flow_val in matches:
-        assert float(flow_val) == MIN_CONSUMPTION_KWH, (
-            f"Consumption floor drifted: nodered-flow.json Math.max({flow_val}, ...) "
-            f"vs src/model.py MIN_CONSUMPTION_KWH={MIN_CONSUMPTION_KWH!r}"
-        )
+    assert re.search(r"Math\.max\(\s*MIN_CONSUMPTION_KWH\s*,\s*baseConsumption\s*\)", func), (
+        "Could not find `Math.max(MIN_CONSUMPTION_KWH, baseConsumption)` clamp in nodered-flow.json"
+    )
+    flow_val = _extract_scalar(func, "MIN_CONSUMPTION_KWH")
+    assert flow_val == MIN_CONSUMPTION_KWH, (
+        f"Consumption floor drifted: nodered-flow.json MIN_CONSUMPTION_KWH={flow_val!r} "
+        f"vs src/model.py MIN_CONSUMPTION_KWH={MIN_CONSUMPTION_KWH!r}"
+    )
 
 
 def test_test_cfg_matches_real_config(test_cfg):
