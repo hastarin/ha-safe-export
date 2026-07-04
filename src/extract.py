@@ -3,11 +3,12 @@
 import argparse
 import logging
 import sqlite3
+from dataclasses import fields
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from src import __version__
-from src.config import Config, load_config
+from src.config import Config, SensorConfig, load_config
 from src.windows import windows_for_date
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -15,10 +16,14 @@ log = logging.getLogger(__name__)
 
 FIRST_DATE = date(2023, 11, 28)
 
-_OPTIONAL_SENSORS = {
-    "guests", "solcast", "median_temp", "median_humidity",
-    "forecast_temp", "forecast_humidity",
-}
+# "Optional sensor" == "SensorConfig field whose dataclass default is None".
+# Derived from the dataclass so it can't drift from the field definitions — a
+# sensor added with `= None` is automatically tolerated as absent from the HA
+# DB, and a new required sensor (no default) is automatically enforced. See
+# issue #39.
+_OPTIONAL_SENSORS = frozenset(
+    f.name for f in fields(SensorConfig) if f.default is None
+)
 
 # How far before the 6pm decision point we'll accept a stale forecast value when the
 # exact 18:00-local bucket is missing. The overnight_forecast_* template sensors update

@@ -20,6 +20,7 @@ config.yaml yourself after reviewing. Requires the `tools` extra (numpy):
 
 from __future__ import annotations
 
+import argparse
 import sqlite3
 from dataclasses import dataclass
 
@@ -186,7 +187,18 @@ def empirical_violation(test: list[Row], threshold: float) -> tuple[float, int, 
 
 
 def main() -> None:
-    rows = load_rows(DB_PATH)
+    parser = argparse.ArgumentParser(
+        description="Refit the four-zone consumption model from the dataset DB."
+    )
+    parser.add_argument(
+        "--dataset-db",
+        type=str,
+        default=DB_PATH,
+        help=f"Path to the dataset SQLite database (default: {DB_PATH})",
+    )
+    args = parser.parse_args()
+
+    rows = load_rows(args.dataset_db)
     by_zone: dict[str, list[Row]] = {"heating": [], "warm_boundary": [], "mild": [], "cooling": []}
     for r in rows:
         by_zone[zone_of(r.temp)].append(r)

@@ -16,8 +16,16 @@ Absence periods (config.yaml's absence_periods) proxy each night to the same
 calendar date one year prior. Rates (export / grid buyback) come from
 config.yaml's backtest section.
 Output: HTML report.
+
+CLI (matches src/extract.py's conventions — issue #40):
+
+    python -m tools.backtest [--dataset-db data/dataset.db] [--config config/config.yaml]
+
+Both flags default to today's hardcoded paths, so the tool still runs with no
+arguments exactly as before.
 """
 
+import argparse
 import json
 import sqlite3
 from collections import deque
@@ -877,12 +885,29 @@ def build_json(results: dict) -> dict:
 
 
 def main() -> None:
-    cfg  = load_config(Path("config/config.yaml"))
-    rows = load_rows(DB_PATH)
+    parser = argparse.ArgumentParser(
+        description="Backtest the four-zone model against the dataset."
+    )
+    parser.add_argument(
+        "--dataset-db",
+        type=str,
+        default=DB_PATH,
+        help=f"Path to the dataset SQLite database (default: {DB_PATH})",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config/config.yaml"),
+        help="Path to config.yaml (default: config/config.yaml)",
+    )
+    args = parser.parse_args()
+
+    cfg  = load_config(args.config)
+    rows = load_rows(args.dataset_db)
 
     # Rolling 12-month window anchored to the dataset's last available date, so the
     # backtest window stays a consistent 12 months instead of creeping as data grows.
-    backtest_end   = last_dataset_date(DB_PATH)
+    backtest_end   = last_dataset_date(args.dataset_db)
     backtest_start = one_year_before(backtest_end)
 
     # Derive evaluation params from config (not hardcoded), so the backtest's
