@@ -79,12 +79,18 @@ As of an audit on 2026-05-31, **three were silently not being recorded** and had
 - When fixing a bug in extraction or model logic, reproduce it first: write a failing test (extend `tests/fixtures.py`/`test_extract.py`/`test_model.py`, or add a minimal repro if none of the existing fixtures cover it) before writing the fix, so the fix is proven against the real defect rather than a guess.
 - `config/config.yaml` is gitignored because it contains personal sensor names, battery details, and absence-period history. Never print/echo its contents, paste it into a commit message, PR body, or issue, or otherwise let its values leave the local session.
 - Route open-ended searches ("find where X is defined", "which files reference Y") through the `Explore` subagent rather than reading/grepping files directly in the main thread. Its results come back as a short summary instead of full file dumps, which keeps the main session's context small — this matters because sessions in this repo run long (extraction, modelling, tests, docs all in one sitting) and unnecessary full-file reads are what drives context/token usage up, not skills or agents themselves. Reserve direct Read/Grep for when you already know the exact file and location.
+- Prefer minimal, scoped edits. Do not over-engineer, add subagents, or edit correct sentences unless explicitly asked.
+
+## Git Workflow
+
+- After merging or closing a PR, never push further changes to that branch; apply follow-up edits fresh on `main` and delete the stale branch.
+- Never use heredocs for commit messages; use `-m` flags or a temp file to avoid stray characters leaking in.
 
 ## Testing
 
 Three known-good validation fixtures (Feb 7 2026, Mar 20 2026, Jul 17 2025) are documented in `docs/DATASET.md § Validation samples` and encoded in `tests/fixtures.py`. The extraction script must reproduce these values exactly when run against the user's HA database. Tolerances: ±0.1 for percentages and temperatures, ±1 Wh for energies.
 
-A passing run of `pytest` is the bar for any change to extraction logic.
+A passing run of `pytest` is the bar for any change to extraction logic. Before committing, run lint and the full test suite; only commit when both pass.
 
 ## Common commands
 
@@ -104,50 +110,9 @@ A passing run of `pytest` is the bar for any change to extraction logic.
 
 ## Repository structure
 
-```text
-ha-safe-export/
-├── CLAUDE.md
-├── README.md
-├── config/
-│   ├── config.example.yaml  # template — copy to config.yaml and fill in your values
-│   └── config.yaml          # gitignored; your actual sensor names and history
-├── docs/
-│   ├── SPEC.md
-│   ├── DATASET.md
-│   ├── DECISIONS.md
-│   └── analysis/
-│       ├── ENERGY_ANALYSIS.md       # zone model rationale and statistical findings
-│       ├── PHASE_1_SCHEMA_UPDATE.md # sensor coverage and schema evolution log
-│       └── LIVE_INTEGRATION.md      # Phase 3 deployment surface; sensor recording requirement
-├── src/
-│   ├── __init__.py      # defines __version__
-│   ├── config.py        # Config dataclass + load_config()
-│   ├── extract.py       # build/refresh the dataset DB
-│   ├── schema.sql       # canonical DDL for the dataset DB
-│   ├── model.py         # four-zone predictor + predict()
-│   ├── windows.py       # timezone-aware window math
-│   └── migrations/      # historical record of schema changes — NOT auto-applied.
-│       │                #   schema.sql is the source of truth; --rebuild recreates from it.
-│       │                #   These are kept for hand-upgrading an existing old DB in place.
-│       ├── 001_add_weather_forecast.sql    # v1.0.0 → v1.1.0
-│       ├── 002_add_humidity.sql            # v1.1.0 → v1.2.0
-│       ├── 003_add_data_gap.sql            # v1.2.0 → v1.3.0
-│       ├── 004_add_afternoon_temp.sql      # v1.3.0 → v1.4.0
-│       ├── 005_add_evening_grid_export.sql # v1.4.0 → v1.5.0
-│       └── 006_add_forecast_inputs.sql     # v1.5.0 → v1.6.0
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py      # shared test fixtures (test Config)
-│   ├── fixtures.py      # expected values from DATASET.md
-│   ├── test_extract.py
-│   └── test_model.py
-├── tools/
-│   ├── backtest.py          # economic backtest; outputs backtest_report.html/.json
-│   └── nodered-flow.json    # Node-RED flow; runs predict() at 6pm, writes to HA helpers
-├── data/                # gitignored; holds the dataset DB
-├── CHANGELOG.md         # version history; update after schema or model changes
-└── pyproject.toml
-```
+See [Project structure](README.md#project-structure) in `README.md` for the annotated file tree.
+
+Note on `src/migrations/`: these are a historical record and are **not** auto-applied. `schema.sql` is the source of truth; `--rebuild` recreates the DB from it. They exist only for hand-upgrading an existing old DB in place.
 
 ## Incremental behaviour
 
