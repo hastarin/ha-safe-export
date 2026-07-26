@@ -90,14 +90,15 @@ See `docs/DECISIONS.md` ("model-quality benchmark, not a live-performance predic
 - SQL parameter binding always (never string interpolation into queries)
 - Connect to the HA DB read-only: `sqlite3.connect(f"file:{path}?mode=ro", uri=True)`
 - The dataset DB is the project's own SQLite file, separate from the HA DB
-- Fix markdown lint errors via the `fix-markdown` skill (committed at `.claude/skills/fix-markdown/`, so it's available in every clone/cloud session), not by hand — never hand-align a table's pipes (models reliably miscount characters against MD060's "aligned" style; the skill's script re-renders tables deterministically instead)
+- Committed skills live in `.claude/skills/`, so they are available in every clone/cloud session: `fix-markdown` (below), `work-issue` (drive one GitHub issue end-to-end to a PR that closes it — the intended entry point for cloud sessions), and `commit`.
+- Fix markdown lint errors via the `fix-markdown` skill, not by hand — never hand-align a table's pipes (models reliably miscount characters against MD060's "aligned" style; the skill's script re-renders tables deterministically instead)
 - Windows console is cp1252: a script that `print()`s non-ASCII (e.g. the `α` in a backtest scenario label) raises `UnicodeEncodeError`. The project tools write UTF-8 files fine — this only bites ad-hoc scripts printing to the terminal. Prefix such runs with `PYTHONIOENCODING=utf-8` (the dev box also sets this as a user env var, but don't rely on that being present)
 - GitHub operations: prefer the `gh-axi` skill if it's installed. Otherwise fall back to plain `gh`. Otherwise use native GitHub MCP tools if the session has them. Nested/structured JSON bodies that don't fit `gh-axi`'s flat `--field` pairs are the one standing exception — use `gh api ... --input -` for those.
 - When fetching an issue or PR body with `gh-axi issue view` / `pr view`, always pass `--full` on the first fetch. The default view truncates the body, and re-fetching without `--full` first just doubles the round-trip for no reason.
 - Use the Bash tool (not PowerShell) for shell commands in this project.
 - When writing commit messages, NEVER add your agent name as co-author or mention agent involvement.
 - When writing or substantially editing long Markdown files (`docs/*.md` and this `CLAUDE.md`), put each full sentence on its own line — preserve normal Markdown structure, but avoid wrapping multiple sentences onto one physical line.
-- When fixing a bug in extraction or model logic, reproduce it first: write a failing test (extend `tests/fixtures.py`/`test_extract.py`/`test_model.py`, or add a minimal repro if none of the existing fixtures cover it) before writing the fix, so the fix is proven against the real defect rather than a guess.
+- When fixing a bug in extraction or model logic, reproduce it first: write a failing test (extend the relevant module under `tests/` — `fixtures.py`, `test_extract.py`, `test_model.py`, `test_flow_parity.py`, `test_sync.py` and four others — or add a minimal repro if none of the existing fixtures cover it) before writing the fix, so the fix is proven against the real defect rather than a guess.
 - `config/config.yaml` is gitignored because it contains personal sensor names, battery details, and absence-period history. Never print/echo its contents, paste it into a commit message, PR body, or issue, or otherwise let its values leave the local session.
 - Route open-ended searches ("find where X is defined", "which files reference Y") through the `Explore` subagent rather than reading/grepping files directly in the main thread. Its results come back as a short summary instead of full file dumps, which keeps the main session's context small — this matters because sessions in this repo run long (extraction, modelling, tests, docs all in one sitting) and unnecessary full-file reads are what drives context/token usage up, not skills or agents themselves. Reserve direct Read/Grep for when you already know the exact file and location.
 - Prefer minimal, scoped edits. Do not over-engineer, add subagents, or edit correct sentences unless explicitly asked.
@@ -115,6 +116,7 @@ Tolerances: ±0.1 for percentages and temperatures, ±1 Wh for energies.
 
 A passing run of `pytest` is the bar for any change to extraction logic.
 Before committing, run lint and the full test suite; only commit when both pass.
+CI (`.github/workflows/ci.yml`) runs `ruff check .` → `pytest` → `mypy`; the mypy gate over `src/` is **non-blocking**, so its findings are advisory rather than merge blockers.
 
 ## Common commands
 
@@ -130,6 +132,12 @@ Before committing, run lint and the full test suite; only commit when both pass.
 
 # Economic backtest (outputs tools/backtest_report.html and tools/backtest_report.json)
 .venv/Scripts/python -m tools.backtest
+
+# Lint — the commit gate, alongside pytest
+.venv/Scripts/python -m ruff check .
+
+# Type check (advisory; mypy is not in the venv by default — CI installs it)
+.venv/Scripts/python -m pip install mypy && .venv/Scripts/python -m mypy
 ```
 
 ## Repository structure
