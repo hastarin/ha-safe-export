@@ -394,3 +394,22 @@ Issues are unlikely to get personal attention. If something is broken or unclear
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Command cheat sheet
+
+Kept last so `cat README.md` leaves it on screen.
+
+```bash
+# Incremental extraction — the normal path after refreshing the HA DB
+.venv/Scripts/python -m src.extract data/home-assistant_v2.db
+
+# Full rebuild — only when extraction methodology changed
+.venv/Scripts/python -m src.extract data/home-assistant_v2.db --rebuild
+
+# Economic backtest (writes tools/backtest_report.{html,json})
+.venv/Scripts/python -m tools.backtest
+
+# Commit gate: lint + tests, both must pass
+.venv/Scripts/python -m ruff check .
+.venv/Scripts/python -m pytest
+```
