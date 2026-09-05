@@ -66,6 +66,32 @@ not retrain / do not change coefficients.** Reasons:
 **Next review: spring 2026 (Sep, the deployment target)** — when export value rises, re-extract,
 re-measure drift (incl. any cooling-zone shift), and decide retrain then. Nothing to redeploy now.
 
+## Retrain review 2026-09-05 — HELD again (no coefficient change)
+
+Re-extracted through **2026-09-04** (964 trainable nights). Re-measured the 105 post-deployment
+heating nights (2026-05-22 onward). Decision: **still do not retrain.**
+
+- **Point-estimate drift continued and flipped sign.** Mean heating-zone residual moved from
+  June's −0.72 to **+0.21 kWh/night**, fairly flat across temperature (slope only −0.048
+  kWh/°C) — not the steep cold-correlated slope the AC-override theory predicted, so that
+  theory is weaker than it looked in July. A "new standby devices" theory (UNVR, cameras,
+  switches) was floated but doesn't explain this specific June→Sept shift either, since those
+  devices predate June. **Cause of the within-2026 shift is still unconfirmed.**
+- **No actual floor breaches, confirmed against real outcomes.** An early pass at this review
+  used a flawed metric (actual consumption vs. the model's *internal* reserve total) and wrongly
+  flagged a "30% breach rate" — corrected before acting on it. Checked against recorded SoC:
+  78/105 nights had `safe_export_wh=0` (nothing at risk), and of the 28 nights with nonzero
+  export, every one stayed safely above the 10% floor (13.6–28.5% min SoC).
+- **Full-pool refit (964 nights) still barely moves the needle** (29/105 vs 31/105 on the
+  flawed reserve metric) — confirms June's finding, a plain refit can't absorb a recent shift.
+- **Cooling zone unchanged** — still 64 nights, no second summer yet (Dec 2026–Feb 2027).
+- The standby-devices theory remains a plausible explanation for a separate, durable thing: the
+  YoY gap vs. the (mostly pre-hardware) multi-year training baseline — worth folding into
+  whenever a real retrain happens, not urgent on its own.
+
+**Next review: before winter 2027, or sooner if export $ become material or a real floor breach
+is observed.** Nothing to redeploy now.
+
 ## Now: live test via Node-RED + observe
 
 - **Deployed 2026-05-22** — Node-RED flow live with retrained coefficients, aligned
