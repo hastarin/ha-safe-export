@@ -23,6 +23,27 @@ The dataset DB is the contract between Phase 1 and Phase 2; the trained model + 
 - `docs/DECISIONS.md` — why each design choice was made (do not "improve" these without strong justification and discussion)
 - `docs/analysis/` — background analysis docs useful for modelling context: `ENERGY_ANALYSIS.md` (three-zone model selection rationale, statistical findings), `PHASE_1_SCHEMA_UPDATE.md` (sensor coverage and schema evolution log), and `LIVE_INTEGRATION.md` (Phase 3 deployment surface: the five Node-RED model-input sensors, the `grid_export_*` execution chain, and the long-term-statistics recording requirement)
 
+## Live Home Assistant access via MCP (optional, local-only)
+
+If a `.mcp.json` is present locally (it's gitignored — not every clone or cloud session will have it), a session may also have an `ha-mcp` server: a live connection to the running Home Assistant instance, distinct from the `home-assistant-db`/`dataset-db` SQLite MCP servers that read DB files directly.
+Don't assume it's connected — check the available tools before relying on it, and fall back to the raw `home-assistant_v2.db` queries below if it isn't there.
+**Don't assume it's read-only, either** — that's a per-server config choice, not a guarantee of the tool itself.
+Before using it, check whether its tool descriptions/instructions say write tools are disabled (as they currently do on this install); if not, or if unsure, treat it as capable of writing to the live HA instance and stick to read-oriented calls (`ha_get_history`, `ha_get_state`, `ha_search`, `ha_config_get_*`) rather than anything that calls a service or changes config.
+
+Prefer `ha-mcp` over hand-rolled SQLite queries against `home-assistant_v2.db` for:
+
+- **Gotcha #6 audits** — "is sensor X actually in long-term `statistics`, and does it have recent/gapless rows?" Use `ha_get_history(source="statistics", entity_ids=[...], period="day")` instead of joining `statistics_meta` manually; it returns clean labeled series with local-time metadata already applied.
+- **Reconstructing what the live flow decided on a past night** — pull the five model-input sensors (`docs/analysis/LIVE_INTEGRATION.md`) directly by entity_id via `ha_get_history(source="statistics", ...)`, no `statistics_meta` id lookup needed.
+- **Current entity state/config lookups** — e.g. disambiguating sensors (there are two `byd…state_of_charge` entities; only the unsuffixed one is what `nodered-flow.json` reads), checking an automation/script/helper body, or confirming a sensor exists at all. Use `ha_search` / `ha_get_state` / `ha_config_get_automation` rather than grepping the HA DB's `states_meta`/`statistics_meta` tables.
+
+Still use the raw `home-assistant_v2.db` (via `home-assistant-db` MCP or direct sqlite) for:
+
+- Phase 1 extraction logic and anything the extract script itself queries — that's the actual data path being tested, not a one-off audit.
+- History older than what `statistics` retains for non-`state_class` sensors, or raw `states`-table detail beyond the ~10-day window `ha-mcp`'s `source="history"` also caps out at.
+- Anything requiring the dataset DB (`dataset.db`) — unrelated to `ha-mcp` entirely; keep using `dataset-db`.
+
+`ha-mcp`'s `source="history"` (the default, not `"statistics"`) has the same ~8–10 day retention as the `states` table — it does not extend gotcha #6's window, it just saves you writing the SQL.
+
 ## Critical gotchas
 
 These will cost hours to rediscover.
@@ -75,6 +96,7 @@ To reconstruct or backtest what the live system actually decided on a past night
 Do not assume a sensor is recorded just because it exists — check `statistics_meta` for it.
 A sensor that exists in `states` but not `statistics`, or that goes `unknown`/`unavailable` at the top of the hour, will leave gaps you cannot recover.
 (A 2026-05-31 audit found three of the five silently unrecorded; `docs/analysis/LIVE_INTEGRATION.md` has the HA-config causes and fixes.)
+If the `ha-mcp` server is connected (see "Live Home Assistant access via MCP" above), `ha_get_history(source="statistics", ...)` does this check without hand-joining `statistics_meta`.
 
 **Also: the live temp input is a _forecast_ (Truganina hourly), not BOM.**
 The dataset's `bom_temp_mean` is BOM **actuals** over the same 6pm–11am window — a _different source_.
