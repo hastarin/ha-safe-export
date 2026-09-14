@@ -556,6 +556,38 @@ This generalises the existing Solcast reasoning ("Solcast forecast is what the m
 
 ---
 
+### Wear-adjusted export economics (optional backtest scenario)
+
+**Decision:** `tools/backtest.py` can optionally net export revenue against a **battery-throughput wear cost** (`$/kWh = battery_replacement_cost_aud ÷ battery_throughput_warranty_kwh`, both in `config.yaml`'s `backtest:` section), shown as extra "Wear cost" / "Net after wear" columns whenever both keys are configured. Sourced from the BYD Battery-Box Premium's **warranty basis** — cumulative kWh throughput to 10yr/60% SOH, not a cycle count — because that's the metric BYD actually publishes for this pack.
+**Status:** Locked (methodology); the deployment question is resolved — see "Resolution" below.
+**Date:** 2026-09-14
+
+**Rationale:** The 6–9pm export feature earns the GloBird export tariff per kWh discharged, but every kWh discharged also consumes part of the battery's finite warranted lifetime throughput — a cost the backtest never priced before this. At the 2026-09 tariff (`$0.10/kWh` export) and configured wear cost (`$13,000 ÷ 42,690 kWh ≈ $0.305/kWh`), a night's export revenue does not cover its wear cost by a wide margin (roughly 3×), independent of the separate buyback-risk question `accum_night`'s shortfall metric already covers.
+
+**Two caveats that matter before acting on this, raised in discussion and not obvious from the number alone:**
+
+1. **Crossing the throughput warranty does not mean the battery must be replaced.** The warranty is a capacity-retention guarantee (≥60% SOH), not an end-of-life cliff — LFP packs degrade gradually and typically keep working, at reduced capacity, well past it. `$/kWh throughput` is a conservative _cost-basis proxy_ for comparing export economics, not a forecast that the pack dies exactly at 42.69 MWh. Treating it as a hard replacement cost overstates the case against exporting.
+2. **The $/kWh figure only prices what it costs if the throughput budget is actually the binding constraint** — i.e. if the household is on track to exhaust it before the 10-year calendar mark. If actual usage is well under the implied annual budget (`42,690 ÷ 10 = 4,269 kWh/yr`), the pack will hit the 10-year mark on calendar time regardless, and the marginal cost of *extra* throughput today is much smaller than the amortized $0.305/kWh — closer to whatever incremental calendar-driven degradation the extra cycling adds, not a slice of a budget that would otherwise go unspent anyway.
+
+**Measured against caveat 2 (queried directly from `home-assistant_v2.db`, 2023-11-27 commissioning → 2026-09-05, 2.77 years):**
+
+- Discharge-only throughput: ~7,088 kWh total → **~2,558 kWh/yr** actual vs the 4,269 kWh/yr implied budget (60%) → at this rate the warranty throughput cap is reached in **~16.7 years**, past the 10-year calendar mark. Under this reading of "throughput," the cap is not the binding constraint at all.
+- Combined charge+discharge: ~14,571 kWh total → **~5,258 kWh/yr** (123% of budget) → cap reached in **~8.1 years**, ~2 years before the calendar mark. Under this reading, the household's overall cycling — not the export feature specifically — is what's on track to bind the warranty.
+- Either way, **the safe-export feature itself is a small share of total throughput**: the dataset's `evening_grid_export_wh` sums to only ~532 kWh over the same 2.77-year span (~192 kWh/yr, 4–8% of the totals above). Removing the export feature entirely barely moves the exhaustion date under either interpretation (discharge-only: ~16.7 → ~18.6yr; combined: ~8.1 → ~8.4yr).
+
+**Net read:** the $0.305/kWh figure is a real, defensible average cost _if_ the household will actually consume the full 42.69 MWh budget before 10 years — which BYD's own throughput warranty doesn't say either way (it depends on whether their "throughput" metric counts discharge only or both directions, which we don't know), and which the export feature specifically is not what determines regardless of that reading. If the intent is to reduce warranty-throughput risk, cutting the export feature is a comparatively small lever; the household's baseline daily cycling is the much larger share.
+
+**Evidence:** Ad hoc query against `home-assistant_v2.db`'s `statistics` table (`battery_charged`/`battery_discharged` cumulative sensors, `sum` column, per gotcha #5) and `daily_observations.evening_grid_export_wh` totals from `dataset.db`. Not committed as a script — reproducible from `cfg.sensors.battery_charged`/`battery_discharged` and the commissioning date in `providers`.
+
+**Resolution (2026-09-14): keep the export feature running; do not disable it on wear-cost grounds.** Two further points, beyond the two caveats above, closed the question:
+
+- **Realistic full-life amortization, not the warranty floor, is the right cost basis.** The warranty's 42.69 MWh is a _minimum guarantee_, not an expected lifetime throughput — LFP packs plausibly deliver 15-20 years of degraded-but-usable service (an industry-standard extrapolation, not fleet-proven at that age yet). Amortizing $13,000 over measured actual throughput rates × a 20-year horizon instead of 42.69 MWh over 10 years gives **~$0.124/kWh (combined charge+discharge basis) to ~$0.254/kWh (discharge-only basis)** — near breakeven against the `$0.10/kWh` export rate, not the ~3× loss the warranty-denominator figure implied. Live-policy (P50) totals over the backtest's 12-month window: revenue $88.65, wear cost $269.95 at the warranty-denominator $0.305/kWh (net after wear −$194.09) vs. wear cost in the ~$36-75 range at the reamortized $0.124-0.254/kWh (net after wear roughly breakeven to +$40).
+- **A future replacement (if one happens at all) is not guaranteed to be a like-for-like BYD pack bought at today's price**, and may not happen on a timescale where the owner is the one paying for or using it. Pricing a hypothetical future purchase that may never occur, at a price it may never cost, is not a sound basis for changing behaviour today.
+
+The buyback-shortfall risk from the SoC-trough metric above (a genuinely observed cost when the model over-exports) remains a more solid basis for caution than wear cost turned out to be. See `TODO.md` "Wear-cost review 2026-09-14" for the resulting monitoring plan (keep P50, watch for floor breaches, ready to step down to P75; consider raising the live `input_number.grid_export_min_soc` safety margin).
+
+---
+
 ### Deployment confidence level: keep Open; Node-RED runs P50 for live testing
 
 **Decision:** Deployment confidence is **not yet settled**. The Node-RED flow's default output is set to **P50** so live operation exercises the most-capturing level, but no fixed deployment confidence is locked.

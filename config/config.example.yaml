@@ -66,6 +66,16 @@ backtest:
   export_rate_per_kwh: 0.15    # feed-in tariff, $/kWh
   buyback_rate_per_kwh: 0.28   # grid import cost used to price shortfalls, $/kWh
 
+  # Optional: wear-adjusted economics. Both keys must be set together, or omitted
+  # together (default: wear cost is not evaluated, backtest report shows no wear
+  # columns). Source these from your battery's WARRANTY THROUGHPUT, not a cycle
+  # count — many LFP packs (e.g. BYD Battery-Box Premium) warrant cumulative kWh
+  # discharged, not cycles. wear_cost_per_kwh = replacement_cost / throughput_kwh
+  # is charged against every kWh the model exports, on top of the export/buyback
+  # tariff economics above. See docs/DECISIONS.md "Wear-adjusted export economics".
+  # battery_replacement_cost_aud: 13000        # your best current replacement quote
+  # battery_throughput_warranty_kwh: 42690     # cumulative kWh throughput warranty
+
 model:
   # Four-zone model coefficients (zone bands: 17/19/21 °C on forecast overnight mean temp).
   # The values below are placeholders — replace with your own fitted coefficients from

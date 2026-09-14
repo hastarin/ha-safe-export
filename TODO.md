@@ -92,6 +92,43 @@ heating nights (2026-05-22 onward). Decision: **still do not retrain.**
 **Next review: before winter 2027, or sooner if export $ become material or a real floor breach
 is observed.** Nothing to redeploy now.
 
+## Wear-cost review 2026-09-14 — keep P50, watch for floor breaches
+
+Prompted by the widened GloBird spread (`$0.10` export / `$0.33` buyback since Aug 1) raising
+the question of whether the export feature is worth the battery wear. Added an optional
+wear-adjusted backtest scenario (`tools/backtest.py`, `docs/DECISIONS.md` "Wear-adjusted export
+economics") pricing exported kWh against the battery's throughput-warranty cost basis
+(`$13,000 ÷ 42.69 MWh ≈ $0.305/kWh`) — at that basis, live-policy (P50) net revenue over the
+last 12 months ($75.86) becomes **net −$194.09 after wear**.
+
+**Decision: keep running P50, do not disable the export feature.** The warranty-denominator
+wear-cost figure turned out to be a conservative upper bound, not a realistic cost:
+
+- Crossing the throughput warranty doesn't mean forced replacement — LFP degrades gracefully
+  past the 60% SOH floor; real life is plausibly 15-20 years (extrapolated, not fleet-proven).
+- Amortized over actual measured throughput rates × a 20-year life instead of the 10yr/42.69MWh
+  warranty minimum, cost/kWh drops to ~$0.124-0.254/kWh (combined vs discharge-only basis) —
+  close to breakeven against the $0.10 export rate, not a 3× loss.
+- Future replacement cost is likely lower than today's $13k (breakeven for scenario G is
+  ~$3,650, a ~72% drop — plausible only at the aggressive end of historical LFP price trends,
+  but not the whole picture once the amortization-horizon point above is factored in).
+- The export feature itself is a small share of total battery throughput (~4-8%, from
+  `evening_grid_export_wh` vs measured `battery_charged`/`battery_discharged` totals) —
+  disabling it barely changes when/if a throughput cap would bind either way.
+- Replacement may not happen at all on the relevant timescale (life circumstances).
+
+**Action instead: monitor, don't disable.**
+
+- Watch for actual overnight floor breaches at P50 (per the existing retrain-review process —
+  see the 2026-06-21/2026-09-05 reviews above, which found zero breaches through Sept 2026).
+  If breaches start occurring, switch the Node-RED flow's confidence output P50 → P75 rather
+  than disabling export outright (see DECISIONS.md "Deployment confidence level: keep Open").
+- Consider raising `input_number.grid_export_min_soc` (currently 50%, the live discharge-floor
+  helper the export scripts stop at — separate from BYD `minSoc` and the model's own reserve)
+  as an additional safety margin. This is a live HA helper value, not a repo file — manual
+  change in HA, not something this session can apply (ha-mcp write tools are disabled on this
+  install per CLAUDE.md). Revisit alongside the next retrain review if floor behaviour changes.
+
 ## Now: live test via Node-RED + observe
 
 - **Deployed 2026-05-22** — Node-RED flow live with retrained coefficients, aligned

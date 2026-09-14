@@ -28,6 +28,7 @@ def test_backtest_params_from_config_mirrors_config(test_cfg):
     assert params.hard_floor_frac == test_cfg.battery_reserve_fraction
     assert params.export_rate == test_cfg.backtest.export_rate_per_kwh
     assert params.buyback_rate == test_cfg.backtest.buyback_rate_per_kwh
+    assert params.wear_cost_per_kwh == test_cfg.backtest.wear_cost_per_kwh
     assert params.absence_periods == test_cfg.absence_periods
     assert params.start == date(2025, 5, 11)
     assert params.end == date(2026, 5, 10)
@@ -242,6 +243,31 @@ def test_accum_night_perfect_export_zero_when_trough_below_soft_floor(econ):
     # call "perfect" -> perfect_export = 0 regardless of export_wh.
     m = _run(export_wh=0.0, trough_soc=15.0, params=econ)
     assert m["perfect_net"] == pytest.approx(0.0)
+
+
+def test_accum_night_wear_cost_zero_when_unset(econ):
+    # econ fixture doesn't set wear_cost_per_kwh -> wear columns stay 0, not None,
+    # so callers can always sum/subtract them unconditionally.
+    m = _run(export_wh=2000.0, trough_soc=50.0, params=econ)
+    assert m["wear_cost"] == pytest.approx(0.0)
+    assert m["perfect_wear_cost"] == pytest.approx(0.0)
+
+
+def test_accum_night_wear_cost_charged_on_export_and_perfect_export():
+    # battery_wh=10000, hard floor 10%, soft floor 20%, export_rate=0.10,
+    # wear_cost_per_kwh=0.305 (the $13k/42.69MWh throughput-warranty figure).
+    # trough 50%: export 2000 Wh, perfect_export = (50-20)/100*10000 = 3000 Wh.
+    # wear_cost = 2000/1000*0.305 = 0.61; perfect_wear_cost = 3000/1000*0.305 = 0.915.
+    params = bt.BacktestParams(
+        battery_wh=10000.0, hard_floor_frac=0.10, soft_floor_margin=0.10,
+        export_rate=0.10, buyback_rate=0.33, wear_cost_per_kwh=0.305,
+    )
+    m = _run(export_wh=2000.0, trough_soc=50.0, params=params)
+    assert m["wear_cost"] == pytest.approx(0.61)
+    assert m["perfect_wear_cost"] == pytest.approx(0.915)
+    # Revenue at $0.10/kWh (0.20) doesn't cover wear cost (0.61) -- the point of
+    # this whole scenario: wear-adjusted net is negative even with zero shortfall.
+    assert m["revenue"] - m["shortfall"] - m["wear_cost"] == pytest.approx(0.20 - 0.61)
 
 
 # ---------------------------------------------------------------------------
