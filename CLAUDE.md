@@ -112,7 +112,7 @@ See `docs/DECISIONS.md` ("model-quality benchmark, not a live-performance predic
 - SQL parameter binding always (never string interpolation into queries)
 - Connect to the HA DB read-only: `sqlite3.connect(f"file:{path}?mode=ro", uri=True)`
 - The dataset DB is the project's own SQLite file, separate from the HA DB
-- Committed skills live in `.claude/skills/`, so they are available in every clone/cloud session: `fix-markdown` (below), `work-issue` (drive one GitHub issue end-to-end to a PR that closes it — the intended entry point for cloud sessions), and `commit`.
+- Committed skills live in `.claude/skills/`, so they are available in every clone/cloud session: `fix-markdown` (below) and `work-issue` (drive one GitHub issue end-to-end to a PR that closes it — the intended entry point for cloud sessions).
 - Fix markdown lint errors via the `fix-markdown` skill, not by hand — never hand-align a table's pipes (models reliably miscount characters against MD060's "aligned" style; the skill's script re-renders tables deterministically instead)
 - Windows console is cp1252: a script that `print()`s non-ASCII (e.g. the `α` in a backtest scenario label) raises `UnicodeEncodeError`. The project tools write UTF-8 files fine — this only bites ad-hoc scripts printing to the terminal. Prefix such runs with `PYTHONIOENCODING=utf-8` (the dev box also sets this as a user env var, but don't rely on that being present)
 - GitHub operations: prefer the `gh-axi` skill if it's installed. Otherwise fall back to plain `gh`. Otherwise use native GitHub MCP tools if the session has them. Nested/structured JSON bodies that don't fit `gh-axi`'s flat `--field` pairs are the one standing exception — use `gh api ... --input -` for those.
@@ -142,25 +142,8 @@ CI (`.github/workflows/ci.yml`) runs `ruff check .` → `pytest` → `mypy`; the
 
 ## Common commands
 
-```bash
-# Run all tests
-.venv/Scripts/python -m pytest
-
-# Incremental extraction (append new days since last run)
-.venv/Scripts/python -m src.extract data/home-assistant_v2.db
-
-# Full rebuild of the dataset DB
-.venv/Scripts/python -m src.extract data/home-assistant_v2.db --rebuild
-
-# Economic backtest (outputs tools/backtest_report.html and tools/backtest_report.json)
-.venv/Scripts/python -m tools.backtest
-
-# Lint — the commit gate, alongside pytest
-.venv/Scripts/python -m ruff check .
-
-# Type check (advisory; mypy is not in the venv by default — CI installs it)
-.venv/Scripts/python -m pip install mypy && .venv/Scripts/python -m mypy
-```
+See [Command cheat sheet](README.md#command-cheat-sheet) in `README.md`; run everything through `.venv/Scripts/python -m ...`.
+mypy is not in the venv by default (CI installs it) — `pip install mypy` first if you want the advisory type check locally.
 
 ## Repository structure
 
@@ -169,18 +152,6 @@ See [Project structure](README.md#project-structure) in `README.md` for the anno
 Note on `src/migrations/`: these are a historical record and are **not** auto-applied.
 `schema.sql` is the source of truth; `--rebuild` recreates the DB from it.
 They exist only for hand-upgrading an existing old DB in place.
-
-## Incremental behaviour
-
-The extract script must be incremental:
-
-1. On startup, ensure the dataset DB exists (create from `schema.sql` if not).
-2. Read `MAX(date) FROM daily_observations`. Default to `2023-11-28` (first complete window after commissioning) if empty.
-3. Compute and `INSERT OR REPLACE` rows from `MAX(date) + 1` through yesterday (today's window is incomplete).
-4. Update `extraction_meta` with `last_full_extraction = now()`.
-
-Provide a `--rebuild` flag that drops and re-extracts all rows.
-Useful when methodology changes.
 
 ## Changelog
 
