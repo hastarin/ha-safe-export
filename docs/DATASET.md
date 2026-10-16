@@ -173,8 +173,6 @@ CREATE TABLE daily_observations (
     battery_discharged_wh INTEGER,          -- Wh
     evening_grid_export_wh INTEGER,         -- Wh, grid export over 6–9pm peak; proxy for battery-to-grid export
 
-    curtailment_likely INTEGER NOT NULL,    -- 0/1
-
     extracted_at TEXT NOT NULL,             -- ISO8601 UTC
     extraction_version TEXT NOT NULL        -- e.g. '1.1.0'
 );
@@ -225,7 +223,6 @@ CREATE TABLE extraction_meta (
 | `battery_discharged_wh`        | `discharged.sum @ 10:00 row date − discharged.sum @ 17:00 prior`                                                                                       |
 | `evening_grid_export_wh`       | `produced.sum @ 20:00 prior − produced.sum @ 17:00 prior` (export over 6–9pm peak; proxy for battery-to-grid export)                                   |
 | `consumption_wh`               | `solar_wh_before_11am + grid_import_wh + battery_discharged_wh − grid_export_wh − battery_charged_wh`                                                  |
-| `curtailment_likely`           | `1 if max_soc_prev_daylight ≥ 99 else 0`                                                                                                               |
 | `guests`                       | `1 if MAX(guests_sensor.mean over window) > 0.5 else 0`. **NULL** if the guests sensor has no data for the window. Sensor configured in `config.yaml`. |
 
 All energy values are stored as **integer Wh**. Round to nearest whole Wh.
@@ -274,10 +271,6 @@ data_gap_dates:
 ```
 
 New gaps are added to the config and the extraction script run with `--from <date>` to backfill. The extraction script also warns automatically when a large energy imbalance coincides with near-zero battery throughput (despite a significant SOC swing) or zero solar before 11am — both are reliable indicators of missing sensor data rather than normal integration noise.
-
-### Curtailment likely
-
-Set to 1 when the battery hit at least 99% during the prior day's daylight period (06:00–18:00). On these days, solar export to grid was likely throttled by the inverter once the battery filled, so `solar_wh_before_11am` understates true solar potential.
 
 ## Incremental extraction
 
@@ -332,7 +325,6 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `battery_discharged_wh`        | 3399                                         |
 | `evening_grid_export_wh`       | 1812                                         |
 | `consumption_wh` (balance)     | 5800                                         |
-| `curtailment_likely`           | 1                                            |
 
 ### Mar 20, 2026 (AEDT) — cloudy, deep discharge
 
@@ -365,7 +357,6 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `battery_discharged_wh`        | 5090     |
 | `evening_grid_export_wh`       | 0        |
 | `consumption_wh` (balance)     | 7271     |
-| `curtailment_likely`           | 0        |
 
 ### Jul 17, 2025 (AEST) — winter, depleted, ea period
 
@@ -398,9 +389,8 @@ These three rows are encoded as test fixtures in `tests/fixtures.py`. The extrac
 | `battery_discharged_wh`        | 5806                            |
 | `evening_grid_export_wh`       | 1                               |
 | `consumption_wh` (balance)     | 13543                           |
-| `curtailment_likely`           | 0                               |
 
-These three samples cover both DST regimes (AEST and AEDT), both providers active during validation, full and depleted battery states, sunny and cloudy days, and curtailment / no-curtailment.
+These three samples cover both DST regimes (AEST and AEDT), both providers active during validation, full and depleted battery states, and sunny and cloudy days.
 
 ## Coverage and gaps
 

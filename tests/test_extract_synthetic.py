@@ -443,7 +443,6 @@ def full_day(tmp_path):
         "battery_discharged_wh": 204,
         "evening_grid_export_wh": 15,
         "consumption_wh": 5000 + 170 + 204 - 85 - 136,
-        "curtailment_likely": 0,
     }
 
     return conn, ids, cfg, morning_date, expected

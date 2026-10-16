@@ -36,6 +36,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Removed
 
+- **`curtailment_likely` dataset column** (schema 1.6.0 → 1.7.0, migration `007_drop_curtailment_likely.sql`). The flag was `max_soc_prev_daylight ≥ 99`, i.e. "battery filled during daylight", not curtailment. PV on this installation was only curtailed on Amber when the feed-in price went negative (battery full *and* zero daylight export); EA never curtailed, and under GloBird the battery fills from the free midday window regardless, so the flag fired on 70% of EA, 88% of Amber and 100% of GloBird nights. Nothing consumed it (model, retrain, backtest, Node-RED flow), and the daylight PV it was meant to qualify isn't in the dataset. `max_soc_prev_daylight` is retained. `DATASET.md`, `DECISIONS.md` (new entry superseding "Curtailment threshold at 99%"), and the validation fixtures updated; dataset rebuilt.
 - **`tools/predictor.html`** — unused for months; deleted. Shrinks the model-coefficient sync surface from three hand-synced copies to two (`src/model.py` + `tools/nodered-flow.json`). `README.md`, `CLAUDE.md`, and `DECISIONS.md` updated to describe the two-copy sync rule.
 
 ## [1.6.0] — 2026-07-03

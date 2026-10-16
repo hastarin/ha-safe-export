@@ -11,7 +11,7 @@ The example template is `config/config.example.yaml`.
 
 **Phase 3: Home Assistant integration — underway.**
 Phase 1 (data extraction) and Phase 2 (modelling, `src/model.py` four-zone predictor + `predict()`, economic backtest in `tools/backtest.py`) are both complete.
-The dataset is at **schema v1.6.0** — Phase 3 work has begun adding the live-flow forecast inputs (`forecast_temp_mean`/`forecast_humidity_mean`, v1.5.0 → v1.6.0) so the dataset can eventually be scored on the same forecast the live flow decides on.
+The dataset is at **schema v1.7.0** — Phase 3 work has begun adding the live-flow forecast inputs (`forecast_temp_mean`/`forecast_humidity_mean`, v1.5.0 → v1.6.0) so the dataset can eventually be scored on the same forecast the live flow decides on; v1.7.0 dropped the misleading `curtailment_likely` flag.
 Full deployment is deferred to September 2026.
 
 The dataset DB is the contract between Phase 1 and Phase 2; the trained model + `predict()` function is the contract between Phase 2 and Phase 3.

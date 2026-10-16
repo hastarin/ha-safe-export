@@ -266,10 +266,6 @@ def extract_row(
         if max_guests is not None:
             guests = 1 if max_guests > 0.5 else 0
 
-    curtailment_likely = (
-        1 if (max_soc_prev_daylight is not None and max_soc_prev_daylight >= 99) else 0
-    )
-
     large_imbalance: int | None = None
     if consumption_wh_load is not None:
         imbalance = consumption_wh_load - consumption_wh
@@ -312,7 +308,6 @@ def extract_row(
         "battery_charged_wh": battery_charged_wh,
         "battery_discharged_wh": battery_discharged_wh,
         "evening_grid_export_wh": evening_grid_export_wh,
-        "curtailment_likely": curtailment_likely,
         "extracted_at": now_utc,
         "extraction_version": __version__,
         "_large_imbalance": large_imbalance,  # None or int; used by extract_all, not written to DB
@@ -441,7 +436,7 @@ def _extract_all_inner(
                 solar_wh_before_11am, consumption_wh, consumption_wh_load,
                 grid_import_wh, grid_export_wh, battery_charged_wh, battery_discharged_wh,
                 evening_grid_export_wh,
-                curtailment_likely, extracted_at, extraction_version
+                extracted_at, extraction_version
             ) VALUES (
                 :date, :provider, :guests, :absence_period, :data_gap,
                 :soc_at_6pm, :min_soc_overnight, :max_soc_prev_daylight, :soc_at_11am,
@@ -454,7 +449,7 @@ def _extract_all_inner(
                 :solar_wh_before_11am, :consumption_wh, :consumption_wh_load,
                 :grid_import_wh, :grid_export_wh, :battery_charged_wh, :battery_discharged_wh,
                 :evening_grid_export_wh,
-                :curtailment_likely, :extracted_at, :extraction_version
+                :extracted_at, :extraction_version
             )
             """,
             row_data,

@@ -94,14 +94,14 @@ Each entry has the form:
 
 **Rationale:** The morning date is the date the prediction is _evaluated against_ (did we hit the safety threshold by 11am on this date?). Indexing by the start date would make queries like "all rows where the SoC was below 20% by morning" awkward.
 
-### Daylight-only window (06:00–18:00) for curtailment detection
+### Daylight-only window (06:00–18:00) for `max_soc_prev_daylight`
 
 **Decision:** `max_soc_prev_daylight` only considers the 6am–6pm slice of the prior day, not the full 24 hours.
 **Status:** Locked.
 
-**Rationale:** We're detecting same-day solar curtailment ("did the battery hit 100% because of today's solar generation?"). Including overnight hours would pick up battery state inherited from the _previous_ day's solar, producing false positives on cloudy days where overnight SoC remained high from carryover.
+**Rationale:** We're measuring how full the battery got from that day's charging ("did the battery hit 100% because of today's solar generation?"). Including overnight hours would pick up battery state inherited from the _previous_ day's solar, producing false positives on cloudy days where overnight SoC remained high from carryover.
 
-**Evidence:** On 2026-03-19 the battery began the day at ~82% (carryover) but only reached 64% during daylight. The full-day max of 82% would falsely suggest curtailment; the daylight-only max of 64% correctly indicates a low-solar day.
+**Evidence:** On 2026-03-19 the battery began the day at ~82% (carryover) but only reached 64% during daylight. The full-day max of 82% would falsely suggest a well-charged day; the daylight-only max of 64% correctly indicates a low-solar day.
 
 **Alternatives considered:** Sunrise-to-sunset (rejected: complicates the window calc with no real benefit at Melbourne's latitudes), prior-day calendar max (rejected: see evidence above).
 
@@ -223,14 +223,18 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 
 ---
 
-### Curtailment threshold at 99%, not 100%
+### `curtailment_likely` dropped (schema 1.7.0)
 
-**Decision:** `curtailment_likely = 1` when `max_soc_prev_daylight ≥ 99`.
+**Decision:** The `curtailment_likely` column (`1 if max_soc_prev_daylight ≥ 99`) was removed from `daily_observations`.
 **Status:** Locked.
+**Supersedes:** "Curtailment threshold at 99%, not 100%".
 
-**Rationale:** SoC measurements have minor noise and do not always report exactly 100% even at full charge. A 99% threshold catches near-100% correctly while remaining a strong signal that the battery filled (which is the actual condition driving curtailment).
+**Rationale:** The flag measured only "the battery filled during daylight", not curtailment.
+On this installation PV was only curtailed on Amber, when the feed-in price went negative and export was blocked — i.e. battery ≥ 99% *and* zero daylight grid export.
+EA never curtailed, and under GloBird the battery fills from the free 11:00–14:00 window regardless, so the flag fired on 70% of EA nights, 88% of Amber nights and 100% of GloBird nights — almost entirely false positives.
+Nothing consumed it (not the model, retrain, backtest or Node-RED flow), and the daylight PV it was meant to qualify is not in the dataset at all, so it carried no usable information.
 
-**Alternatives considered:** 100% (rejected: brittle to measurement noise), 95% (rejected: would catch near-full days where curtailment did not actually occur).
+**Alternatives considered:** Correcting the definition to battery ≥ 99% and zero daylight export (rejected: needs a new daylight-export extraction for a flag that is permanently 0 from May 2026 onward; better designed alongside daylight-PV columns if a solar-shortfall analysis is ever wanted), relabelling as a battery-full proxy (rejected: `max_soc_prev_daylight` already carries that information).
 
 ---
 
@@ -290,10 +294,10 @@ The extraction script detects likely new gaps automatically: a large energy imba
 
 ### Three days, deliberately diverse
 
-**Decision:** The validation suite contains exactly three known-good fixtures: Feb 7 2026 (AEDT, sunny, full battery, amber, curtailed), Mar 20 2026 (AEDT, cloudy, depleted battery, amber, no curtailment), Jul 17 2025 (AEST, winter, depleted, ea, no curtailment).
+**Decision:** The validation suite contains exactly three known-good fixtures: Feb 7 2026 (AEDT, sunny, full battery, amber), Mar 20 2026 (AEDT, cloudy, depleted battery, amber), Jul 17 2025 (AEST, winter, depleted, ea).
 **Status:** Locked for these three; additional fixtures may be added.
 
-**Rationale:** Three is the minimum to cover both DST regimes (AEST and AEDT), both providers active during validation (ea and amber), both battery states (full and depleted), and curtailment / no-curtailment. A larger fixture set was tempting but each fixture must be validated against the HA history chart by hand; three is the point of diminishing returns.
+**Rationale:** Three is the minimum to cover both DST regimes (AEST and AEDT), both providers active during validation (ea and amber), and both battery states (full and depleted). A larger fixture set was tempting but each fixture must be validated against the HA history chart by hand; three is the point of diminishing returns.
 
 **Evidence:** Each fixture's primary fields were cross-checked against HA history charts and the HA Energy Dashboard during the design conversation. The values are documented in DATASET.md § Validation samples.
 
