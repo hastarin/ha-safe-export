@@ -592,10 +592,44 @@ The buyback-shortfall risk from the SoC-trough metric above (a genuinely observe
 
 ---
 
-### Deployment confidence level: keep Open; Node-RED runs P50 for live testing
+### Deployment confidence level: keep P50, with the 50% export floor as the backstop
+
+**Decision:** Keep the live flow at **P50** across all zones.
+Treat the export subsystem's `input_number.grid_export_min_soc` (50%) as a permanent part of the safety design, not a temporary guard.
+Do **not** switch the empirical zones (warm boundary, mild) to P75 for now.
+**Status:** Locked for now; revisit once cooling-zone nights (> 21 °C) dominate in summer 2026–27.
+**Date:** 2026-10-25 (supersedes the 2026-05-22 "keep Open" entry below)
+
+**Evidence (Sep 1 – Oct 24 2026, scored on the live forecast inputs, not BOM actuals):**
+
+- Consumption is not under-predicted overall.
+  The mean residual (actual − P50 estimate) was −1.3 kWh/night, and actual exceeded the P50 estimate on only ~13% of nights.
+  The heating zone runs ~1.4 kWh high, because P50 still carries 0.33 × the P95 buffer there.
+- The tail risk sits in the warm-boundary and mild zones.
+  There, P50 is the raw empirical median with no buffer, and these are the nights with the largest (~6 kWh) exports.
+  On 2026-10-24 (forecast 18.9 °C) the model estimated 5.98 kWh, and actual consumption was 7.01 kWh.
+  The 50% floor capped the export at 4.95 kWh against the model's 6.30 kWh, and the trough was 16.9%.
+  Uncapped, the trough would have been ~7%, below the 10% reserve.
+- Simulated uncapped, P50 would have breached the reserve on 2 nights since Sep 1 (2026-10-03, 2026-10-24), about 0.8 kWh in total.
+  P75 had none.
+- At $0.10 export / $0.33 buyback, the marginal break-even confidence is ~77% (≈ P75).
+  Even so, P50 still netted more than P75 in the uncapped simulation ($11.74 vs $9.79 since Sep 2026, $71.45 vs $61.94 since Sep 2025), because the shortfalls are small and morning solar refills them.
+  The year-long figures use BOM actuals before May 2026, when the forecast inputs were not yet recorded, so they are optimistic.
+
+**Rationale:** On the risky nights, the 50% floor does roughly what P75-for-empirical-zones would do, with no model change.
+P75-for-empirical-zones would mean changing `model.py`, `config.yaml` and `nodered-flow.json` in sync.
+Neither option protects heating-zone nights: on 2026-10-03 (13.8 °C forecast, 1.04 kWh exported, the cap not binding) the battery still reached the 10% floor and imported 563 Wh.
+That is one night in eight weeks, against a heating model that runs high on average, so it does not justify action.
+If heating-zone floor hits become regular, the fix is a larger heating buffer, not a P75 switch for the empirical zones.
+
+**Revisit when:** cooling-zone nights become common (that zone has only ~1 summer of training data), the tariff ratio changes materially, or the 50% floor is lowered or removed.
+
+---
+
+### (Superseded 2026-10-25) Deployment confidence level: keep Open; Node-RED runs P50 for live testing
 
 **Decision:** Deployment confidence is **not yet settled**. The Node-RED flow's default output is set to **P50** so live operation exercises the most-capturing level, but no fixed deployment confidence is locked.
-**Status:** Open (only validated on a 14-day window so far).
+**Status:** Superseded by the entry above (P50 kept, with the 50% export floor as the backstop).
 **Date:** 2026-05-22 (supersedes the 2026-05-11 "start at P75" position below)
 
 **Rationale:** Under the corrected data + SoC-trough metric, P50 is the best model confidence on net capture and showed **zero floor breaches** over the recent 14 days, with room to possibly push more aggressive. But 14 days is far too little to lock a deployment policy, and the full-period numbers are caveated (full-charge assumption, in-sample baselines). The Node-RED flow exporting P50 is a _live test_, not a locked decision — revisit after a meaningful run of real nights. The earlier P75 starting position is superseded but kept below for history.
