@@ -230,7 +230,7 @@ Across the full 2-day Mar 19–20 window, integrated load was 25.82 kWh while th
 **Supersedes:** "Curtailment threshold at 99%, not 100%".
 
 **Rationale:** The flag measured only "the battery filled during daylight", not curtailment.
-On this installation PV was only curtailed on Amber, when the feed-in price went negative and export was blocked — i.e. battery ≥ 99% *and* zero daylight grid export.
+On this installation PV was only curtailed on Amber, when the feed-in price went negative and export was blocked — i.e. battery ≥ 99% _and_ zero daylight grid export.
 EA never curtailed, and under GloBird the battery fills from the free 11:00–14:00 window regardless, so the flag fired on 70% of EA nights, 88% of Amber nights and 100% of GloBird nights — almost entirely false positives.
 Nothing consumed it (not the model, retrain, backtest or Node-RED flow), and the daylight PV it was meant to qualify is not in the dataset at all, so it carried no usable information.
 
