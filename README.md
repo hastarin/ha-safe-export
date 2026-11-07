@@ -25,7 +25,7 @@ Each evening at 6pm, residential battery owners with solar face a decision:
 - **Export aggressively** to capture the day's highest grid-feed-in tariffs, but risk running the battery flat overnight and importing expensive grid power at the worst possible time.
 - **Hold back** to guarantee comfort overnight, leaving export revenue on the table.
 
-`ha-safe-export` is a Home Assistant integration (eventually — see [phases](#phases)) that takes the guesswork out of this decision. At 6pm each day it answers a single question:
+`ha-safe-export` is a Home Assistant integration that takes the guesswork out of this decision. At 6pm each day it answers a single question:
 
 > _Given the current battery charge, the weather forecast, and what we've learned from past nights, how much can be safely exported between now and 9pm such that the battery still has enough at 11am tomorrow?_
 
@@ -55,7 +55,8 @@ This project is currently scoped to one specific home installation:
 | Location                     | Melbourne, Australia                      |
 | Energy providers (over time) | Energy Australia → Amber Energy → GloBird |
 
-The data extraction is hardcoded to these specific sensors and providers. Generalising this is a Phase 3 concern; the integration version will discover available sensors at config time.
+The data extraction and model training are hardcoded to these specific sensors and providers.
+The integration itself asks for its five input sensors and the battery capacity at config time, but its coefficients still come from this one household's history.
 
 ## How it works (high level)
 
