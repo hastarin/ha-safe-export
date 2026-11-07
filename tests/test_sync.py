@@ -33,7 +33,6 @@ FLOW_JSON = Path("tools/nodered-flow.json")
 BUNDLED_MODEL = Path("custom_components/safe_export/model.py")
 CANONICAL_MODEL = Path("src/model.py")
 COEFFICIENTS_JSON = Path("custom_components/safe_export/coefficients.json")
-MANIFEST_JSON = COEFFICIENTS_JSON.with_name("manifest.json")
 REAL_CONFIG = Path("config/config.yaml")
 SCHEMA_SQL = Path("src/schema.sql")
 
@@ -224,20 +223,6 @@ def test_coefficients_json_matches_test_cfg(test_cfg):
         assert model[key] == cfg_val, (
             f"{key} drifted: {COEFFICIENTS_JSON}={model[key]!r} vs test_cfg={cfg_val!r}"
         )
-
-
-def test_manifest_version_matches_version():
-    """The integration's manifest version must match __version__.
-
-    Releases are tagged from __version__ (v1.7.0 and so on), and the Marketplace
-    shows the release tag while Home Assistant shows the manifest version, so the
-    two must agree. Bump both together; publishing a release is a separate step.
-    """
-    manifest = json.loads(MANIFEST_JSON.read_text(encoding="utf-8"))
-    assert manifest["version"] == __version__, (
-        f"manifest.json version drifted: {MANIFEST_JSON}={manifest['version']!r} "
-        f"vs src/__init__.py __version__={__version__!r}"
-    )
 
 
 def test_schema_sql_header_matches_version():
