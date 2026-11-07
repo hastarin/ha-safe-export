@@ -32,7 +32,7 @@ from src.model import CONFIDENCE_SCALE, MIN_CONSUMPTION_KWH
 FLOW_JSON = Path("tools/nodered-flow.json")
 BUNDLED_MODEL = Path("custom_components/safe_export/model.py")
 CANONICAL_MODEL = Path("src/model.py")
-COEFFICIENTS_JSON = Path("custom_components/safe_export/coefficients.json")
+COEFFICIENTS_JSON = Path("custom_components/safe_export/coefficients.json")
 MANIFEST_JSON = COEFFICIENTS_JSON.with_name("manifest.json")
 REAL_CONFIG = Path("config/config.yaml")
 SCHEMA_SQL = Path("src/schema.sql")
