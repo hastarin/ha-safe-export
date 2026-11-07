@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - **Integration icon.** `custom_components/safe_export/brand/` holds `icon.png` (256 px) and `icon@2x.png` (512 px), rendered from `icon.svg`: a navy shield with an orange rim around a battery with three charge bars. Home Assistant 2026.3+ serves brand images from this folder for custom integrations, replacing the "icon not available" placeholder.
+- **The integration now has its own version, separate from `__version__`.** `manifest.json` goes to 1.7.1 for the icon, and GitHub releases are tagged with the integration version, so an integration-only change no longer forces a dataset schema bump. `__version__` stays 1.7.0 and keeps tracking the dataset schema. The `manifest.json`/`__version__` equality check added in 1.7.0 is removed from `tests/test_sync.py`.
 
 ## [1.7.0] — 2026-11-07
 

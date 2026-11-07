@@ -167,8 +167,9 @@ Add the new entry under `## [Unreleased]` at the top; move it to a dated version
 
 **Version bumping:** the single source of truth is `__version__` in `src/__init__.py` (`pyproject.toml` reads it dynamically; convention: it tracks the dataset schema version).
 Bump it in the same commit as any behavioural change to extraction or model logic — it is stamped into every dataset row as `extraction_version`, and a stale value makes rows unattributable to the logic that produced them.
-`custom_components/safe_export/manifest.json`'s `version` must match it (`tests/test_sync.py` enforces this).
-Publish a GitHub release (`v` + `__version__`) only when the integration changes: the Marketplace offers updates from releases, so a version bump without a release prompts no one.
+The integration has its own version, `version` in `custom_components/safe_export/manifest.json`, independent of `__version__` (both started at 1.7.0).
+Bump it for any change under `custom_components/safe_export/` that should reach installs, then publish a GitHub release tagged `v` + that version after merging: the Marketplace offers updates only from releases, and shows the tag as the version.
+GitHub release tags are therefore integration versions only; `__version__` is not tagged.
 
 ## Model coefficients are duplicated in three places — keep them in sync
 
