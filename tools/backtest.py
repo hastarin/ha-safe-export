@@ -67,6 +67,10 @@ class BacktestParams:
     start: date = DEFAULT_BACKTEST_START
     end: date = DEFAULT_BACKTEST_END
     absence_periods: list[AbsencePeriod] = field(default_factory=list)
+    # $/kWh of battery throughput charged against every kWh exported (see
+    # BacktestConfig.wear_cost_per_kwh). None disables wear-adjusted columns
+    # entirely — opt-in, since most installs won't have configured it.
+    wear_cost_per_kwh: float | None = None
 
     @classmethod
     def from_config(cls, cfg: Config, *, start: date, end: date) -> "BacktestParams":
@@ -82,6 +86,7 @@ class BacktestParams:
             start=start,
             end=end,
             absence_periods=cfg.absence_periods,
+            wear_cost_per_kwh=cfg.backtest.wear_cost_per_kwh,
         )
 
     @property
@@ -208,6 +213,12 @@ def accum_night(
     *extra* breach the export causes (a night that was already short with no
     export is not blamed on the export decision). The 'perfect' benchmark exports
     down to the SOFT floor (hard floor + margin), leaving a cushion.
+
+    If `params.wear_cost_per_kwh` is set, every exported kWh (including the
+    'perfect' benchmark's) is also charged a battery-throughput wear cost —
+    see `BacktestConfig.wear_cost_per_kwh` and docs/DECISIONS.md "Wear-adjusted
+    export economics". Left at 0 when unset, so `net_after_wear` degrades
+    gracefully to plain `net` for installs that haven't configured it.
     """
     hard_pct = params.hard_floor_frac * 100.0
     soft_pct = params.soft_floor_frac * 100.0
@@ -224,16 +235,25 @@ def accum_night(
     opportunity    = max(0.0, (perfect_export - export_wh) / 1000) * params.export_rate
     perfect_net    = (perfect_export / 1000) * params.export_rate
 
-    monthly[ym]["revenue"]     += revenue
-    monthly[ym]["shortfall"]   += shortfall_cost
-    monthly[ym]["opportunity"] += opportunity
-    monthly[ym]["perfect_net"] += perfect_net
-    monthly[ym]["nights"]      += 1
+    wear_rate         = params.wear_cost_per_kwh or 0.0
+    wear_cost         = (export_wh / 1000) * wear_rate
+    perfect_wear_cost = (perfect_export / 1000) * wear_rate
+
+    monthly[ym]["revenue"]           += revenue
+    monthly[ym]["shortfall"]         += shortfall_cost
+    monthly[ym]["opportunity"]       += opportunity
+    monthly[ym]["perfect_net"]       += perfect_net
+    monthly[ym]["wear_cost"]         += wear_cost
+    monthly[ym]["perfect_wear_cost"] += perfect_wear_cost
+    monthly[ym]["nights"]            += 1
 
 
 def ensure_month(monthly: dict, ym: str) -> None:
     if ym not in monthly:
-        monthly[ym] = dict(revenue=0.0, shortfall=0.0, opportunity=0.0, perfect_net=0.0, nights=0, skipped=0)
+        monthly[ym] = dict(
+            revenue=0.0, shortfall=0.0, opportunity=0.0, perfect_net=0.0,
+            wear_cost=0.0, perfect_wear_cost=0.0, nights=0, skipped=0,
+        )
 
 
 def run_model_scenario(
@@ -563,7 +583,9 @@ def _cell_class(val: float) -> str:
     return ""
 
 
-def _recent_summary_rows(results: dict, scenarios: list[Scenario], nights_warn: int) -> str:
+def _recent_summary_rows(
+    results: dict, scenarios: list[Scenario], nights_warn: int, show_wear: bool = False
+) -> str:
     """Return HTML rows for a recent-window summary table (all scenarios, single aggregated row each)."""
     rows_html = []
 
@@ -573,17 +595,24 @@ def _recent_summary_rows(results: dict, scenarios: list[Scenario], nights_warn: 
         tot_rev   = sum(m["revenue"]     for m in m_data.values())
         tot_short = sum(m["shortfall"]   for m in m_data.values())
         tot_perf  = sum(m["perfect_net"] for m in m_data.values())
+        tot_wear  = sum(m["wear_cost"]   for m in m_data.values())
         tot_nights = sum(m["nights"]     for m in m_data.values())
         net = tot_rev - tot_short
+        net_after_wear = net - tot_wear
         cap_text, cap_cls, cap_sort = _capture(net, tot_perf)
         computed.append((cap_sort, cap_text, cap_cls, s.key, s.label, s.is_model,
-                         tot_rev, tot_short, tot_perf, net, tot_nights))
+                         tot_rev, tot_short, tot_perf, net, tot_wear, net_after_wear, tot_nights))
 
     computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
 
-    for cap_sort, cap_text, cap_cls, key, desc, is_model, tot_rev, tot_short, tot_perf, net, tot_nights in computed:
+    for (cap_sort, cap_text, cap_cls, key, desc, is_model, tot_rev, tot_short, tot_perf,
+         net, tot_wear, net_after_wear, tot_nights) in computed:
         badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
         warn = f' <span class="skipped">(n={tot_nights})</span>' if tot_nights <= nights_warn else f' <span style="color:#555;font-size:0.8rem">(n={tot_nights})</span>'
+        wear_cells = (
+            f'<td class="num neg2">-${tot_wear:.2f}</td>'
+            f'<td class="num {_cell_class(net_after_wear)}"><strong>${net_after_wear:.2f}</strong></td>'
+        ) if show_wear else ""
         rows_html.append(f"""
           <tr>
             <td>{badge} <strong>{key}</strong> &mdash; {desc}</td>
@@ -592,6 +621,7 @@ def _recent_summary_rows(results: dict, scenarios: list[Scenario], nights_warn: 
             <td class="num {_cell_class(net)}"><strong>${net:.2f}</strong></td>
             <td class="num">${tot_perf:.2f}</td>
             <td class="num {cap_cls}">{cap_text}{warn}</td>
+            {wear_cells}
           </tr>""")
     return "".join(rows_html)
 
@@ -688,6 +718,8 @@ def build_html(
 ) -> str:
     months = sorted(next(iter(results.values())).keys())
     cell_class = _cell_class
+    show_wear = params.wear_cost_per_kwh is not None
+    wear_header = "<th>Wear cost</th><th>Net after wear</th>" if show_wear else ""
 
     # Span of the (rolling) window in whole months, and how many days were served by
     # the prior-year absence proxy (window ∩ any configured absence period). When this
@@ -726,12 +758,14 @@ def build_html(
     for s in scenarios:
         m_data   = results[s.key]
         rows_html = []
-        tot = dict(revenue=0.0, shortfall=0.0, opportunity=0.0, perfect_net=0.0, nights=0)
+        tot = dict(revenue=0.0, shortfall=0.0, opportunity=0.0, perfect_net=0.0,
+                   wear_cost=0.0, perfect_wear_cost=0.0, nights=0)
 
         for ym in months:
             m   = m_data[ym]
             mon = ym[5:7]
             net         = m["revenue"] - m["shortfall"]
+            net_after_wear = net - m["wear_cost"]
             cap_text, cap_cls, _ = _capture(net, m["perfect_net"])
 
             season_tag_html = ""
@@ -741,6 +775,10 @@ def build_html(
                     season_tag_html = f'<span class="season-tag">{lbl}</span>'
 
             skipped = f'<span class="skipped"> ({m["skipped"]} skipped)</span>' if m.get("skipped") else ""
+            wear_cells = (
+                f'<td class="num neg2">-${m["wear_cost"]:.2f}</td>'
+                f'<td class="num {cell_class(net_after_wear)}">${net_after_wear:.2f}</td>'
+            ) if show_wear else ""
             rows_html.append(f"""
               <tr>
                 <td>{MONTH_NAMES[mon]} {ym[:4]}{season_tag_html}</td>
@@ -750,13 +788,19 @@ def build_html(
                 <td class="num {cell_class(net)}">${net:.2f}</td>
                 <td class="num">${m['perfect_net']:.2f}</td>
                 <td class="num {cap_cls}">{cap_text}</td>
+                {wear_cells}
               </tr>""")
-            for k in ("revenue", "shortfall", "opportunity", "perfect_net", "nights"):
+            for k in ("revenue", "shortfall", "opportunity", "perfect_net", "wear_cost", "perfect_wear_cost", "nights"):
                 tot[k] += m[k]
 
         tot_net = tot["revenue"] - tot["shortfall"]
+        tot_net_after_wear = tot_net - tot["wear_cost"]
         tot_cap_text, tot_cap_cls, _ = _capture(tot_net, tot["perfect_net"])
         badge   = '<span class="model-badge">model</span>' if s.is_model else '<span class="baseline-badge">baseline</span>'
+        tot_wear_cells = (
+            f'<td class="num neg2"><strong>-${tot["wear_cost"]:.2f}</strong></td>'
+            f'<td class="num {cell_class(tot_net_after_wear)}"><strong>${tot_net_after_wear:.2f}</strong></td>'
+        ) if show_wear else ""
         scenario_tables.append(f"""
         <section>
           <h2>Scenario {s.key}: {s.label} {badge}</h2>
@@ -765,6 +809,7 @@ def build_html(
               <tr>
                 <th>Month</th><th>Nights</th><th>Revenue</th>
                 <th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture</th>
+                {wear_header}
               </tr>
             </thead>
             <tbody>
@@ -779,6 +824,7 @@ def build_html(
                 <td class="num {cell_class(tot_net)}"><strong>${tot_net:.2f}</strong></td>
                 <td class="num"><strong>${tot['perfect_net']:.2f}</strong></td>
                 <td class="num {tot_cap_cls}"><strong>{tot_cap_text}</strong></td>
+                {tot_wear_cells}
               </tr>
             </tfoot>
           </table>
@@ -793,16 +839,23 @@ def build_html(
         tot_rev         = sum(m["revenue"]     for m in non_winter.values())
         tot_short       = sum(m["shortfall"]   for m in non_winter.values())
         tot_perfect_net = sum(m["perfect_net"] for m in non_winter.values())
+        tot_wear        = sum(m["wear_cost"]   for m in non_winter.values())
         tot_net         = tot_rev - tot_short
+        tot_net_after_wear = tot_net - tot_wear
         cap_text, cap_cls, cap_sort = _capture(tot_net, tot_perfect_net)
         summary_computed.append((cap_sort, cap_text, cap_cls, s.key, s.label, s.is_model,
-                                 tot_rev, tot_short, tot_perfect_net, tot_net))
+                                 tot_rev, tot_short, tot_perfect_net, tot_net, tot_wear, tot_net_after_wear))
 
     summary_computed.sort(key=lambda c: c[0], reverse=True)  # net capture descending
 
     summary_rows = []
-    for cap_sort, cap_text, cap_cls, key, label, is_model, tot_rev, tot_short, tot_perfect_net, tot_net in summary_computed:
+    for (cap_sort, cap_text, cap_cls, key, label, is_model, tot_rev, tot_short, tot_perfect_net,
+         tot_net, tot_wear, tot_net_after_wear) in summary_computed:
         badge = '<span class="model-badge">model</span>' if is_model else '<span class="baseline-badge">baseline</span>'
+        wear_cells = (
+            f'<td class="num neg2">-${tot_wear:.2f}</td>'
+            f'<td class="num {cell_class(tot_net_after_wear)}"><strong>${tot_net_after_wear:.2f}</strong></td>'
+        ) if show_wear else ""
         summary_rows.append(f"""
           <tr>
             <td>{badge} <strong>{key}</strong> — {label}</td>
@@ -811,6 +864,7 @@ def build_html(
             <td class="num {cell_class(tot_net)}"><strong>${tot_net:.2f}</strong></td>
             <td class="num">${tot_perfect_net:.2f}</td>
             <td class="num {cap_cls}">{cap_text}</td>
+            {wear_cells}
           </tr>""")
 
     return f"""<!DOCTYPE html>
@@ -851,15 +905,18 @@ def build_html(
 <body>
 <h1>Safe Export Backtest</h1>
 <p class="subtitle">{params.start} to {params.end} &nbsp;|&nbsp; {months_span} months &nbsp;|&nbsp; Absence period: {proxied_days} days proxied (prior-year) &nbsp;|&nbsp; All scenarios: full-charge SoC</p>
-<p class="rates">Export rate: <strong>${params.export_rate:.2f}/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>${params.buyback_rate:.2f}/kWh</strong></p>
+<p class="rates">Export rate: <strong>${params.export_rate:.2f}/kWh</strong> &nbsp;&nbsp; Grid buyback: <strong>${params.buyback_rate:.2f}/kWh</strong>{
+    f' &nbsp;&nbsp; Battery wear: <strong>${params.wear_cost_per_kwh:.3f}/kWh</strong> throughput'
+    if show_wear else ''
+}</p>
 
 <div class="summary-section recent-section">
   <h2>Recent performance &mdash; last 14 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(small sample &mdash; treat as directional only)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th>{wear_header}</tr>
     </thead>
-    <tbody>{_recent_summary_rows(recent_14, scenarios, nights_warn=14)}</tbody>
+    <tbody>{_recent_summary_rows(recent_14, scenarios, nights_warn=14, show_wear=show_wear)}</tbody>
   </table>
 </div>
 
@@ -867,9 +924,9 @@ def build_html(
   <h2>Recent performance &mdash; last 30 days <span style="font-size:0.8rem;font-weight:normal;color:#777">(moderately noisy)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture (n)</th>{wear_header}</tr>
     </thead>
-    <tbody>{_recent_summary_rows(recent_30, scenarios, nights_warn=20)}</tbody>
+    <tbody>{_recent_summary_rows(recent_30, scenarios, nights_warn=20, show_wear=show_wear)}</tbody>
   </table>
 </div>
 {accuracy_section}
@@ -877,7 +934,7 @@ def build_html(
   <h2>Non-winter scenario summary <span style="font-size:0.8rem;font-weight:normal;color:#777">(Sep–May; winter Jun–Aug excluded — the model correctly idles in winter (≈zero export, zero shortfall), so its net capture is noisy/low-signal there, not loss-making. Monthly tables below still show winter.)</span></h2>
   <table>
     <thead>
-      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture</th></tr>
+      <tr><th>Scenario</th><th>Revenue</th><th>Shortfall</th><th>Net</th><th>Safe net</th><th>Net capture</th>{wear_header}</tr>
     </thead>
     <tbody>{''.join(summary_rows)}</tbody>
   </table>
@@ -895,7 +952,11 @@ def build_html(
   <strong>Metric: SoC trough.</strong> Each night is judged against the actual overnight SoC trough (<code>min_soc_overnight</code>), reconstructed to a no-export baseline by adding back real peak exports (<code>evening_grid_export_wh</code>) and the full-charge adjustment. Exporting <code>E</code> lowers the trough by <code>E&divide;capacity</code>; a shortfall (grid buyback) is charged only for the part that pushes the trough below the <strong>hard floor</strong> (min SoC), and only the extra breach the export causes.<br>
   <strong>Safe net</strong> = what a hindsight-perfect <em>but cautious</em> model would earn: export down to the <strong>soft floor</strong> (min SoC + 10pt cushion) every night, zero shortfall. It is a conservative benchmark, not a maximum &mdash; it deliberately leaves the 10pt cushion unexported. A model that dips into that cushion on a night it turns out not to need it earns real revenue on energy safe net left in the battery, so <strong>Net and Net capture can exceed Safe net / 100%</strong>. That is the cushion being spent for extra return; on a night where consumption runs higher than predicted, the same aggression is what produces a hard-floor shortfall. &ldquo;&mdash;&rdquo; net capture means there was no opportunity (safe net &approx; 0), so the ratio is undefined.<br>
   <strong>Net capture</strong> = net &divide; safe net &mdash; what fraction of that best-possible-yet-cautious outcome was achieved (over 100% means the model out-earned the cautious benchmark by spending the cushion, see above). Accounts for the rate asymmetry: shortfall costs $0.28/kWh to cover while missed export only foregoes $0.15/kWh, so aggressive-but-breaching strategies score lower than their raw revenue suggests.<br>
-  <strong>Full-charge SoC</strong> = 6pm SoC adjusted upward by however short of 100% the prior day&rsquo;s peak fell, simulating GloBird overnight charging. Capacity and floor come from <code>config.yaml</code>.
+  <strong>Full-charge SoC</strong> = 6pm SoC adjusted upward by however short of 100% the prior day&rsquo;s peak fell, simulating GloBird overnight charging. Capacity and floor come from <code>config.yaml</code>.{
+    f'''<br>
+  <strong>Wear cost</strong> = exported kWh &times; <code>battery_replacement_cost_aud &divide; battery_throughput_warranty_kwh</code> (${params.wear_cost_per_kwh:.3f}/kWh here) &mdash; a proxy for the battery-throughput cost of exporting, charged against every kWh the scenario exports (including the &ldquo;Safe net&rdquo; benchmark, which is why it is not shown net-of-wear). This treats the warranty threshold as the cost basis, not as a claim the battery is unusable or must be replaced the moment it is crossed &mdash; degradation is gradual capacity fade, and the pack likely keeps working (at reduced capacity) well beyond it. It is a conservative simplification for comparing export economics, not a forecast of actual battery life.'''
+    if show_wear else ''
+}
 </p>
 </body>
 </html>"""
@@ -910,7 +971,9 @@ def build_json(results: dict, scenarios: list[Scenario]) -> dict:
         tot_rev         = sum(m["revenue"]     for m in m_data.values())
         tot_short       = sum(m["shortfall"]   for m in m_data.values())
         tot_perfect_net = sum(m["perfect_net"] for m in m_data.values())
+        tot_wear        = sum(m["wear_cost"]   for m in m_data.values())
         tot_net         = round(tot_rev - tot_short, 2)
+        tot_net_after_wear = round(tot_net - tot_wear, 2)
         # None (not 0) when there was no opportunity to capture — the ratio is undefined.
         tot_net_capture = round(tot_net / tot_perfect_net * 100, 1) if tot_perfect_net > 1e-9 else None
         monthly = {
@@ -923,6 +986,8 @@ def build_json(results: dict, scenarios: list[Scenario]) -> dict:
                 "net_capture": round(
                     (m["revenue"] - m["shortfall"]) / m["perfect_net"] * 100, 1
                 ) if m["perfect_net"] > 1e-9 else None,
+                "wear_cost":       round(m["wear_cost"], 2),
+                "net_after_wear":  round(m["revenue"] - m["shortfall"] - m["wear_cost"], 2),
             }
             for ym, m in sorted(m_data.items())
         }
@@ -934,6 +999,8 @@ def build_json(results: dict, scenarios: list[Scenario]) -> dict:
                 "net":         tot_net,
                 "perfect_net": round(tot_perfect_net, 2),
                 "net_capture": tot_net_capture,
+                "wear_cost":      round(tot_wear, 2),
+                "net_after_wear": tot_net_after_wear,
             },
             "monthly": monthly,
         }

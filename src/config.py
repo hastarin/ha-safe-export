@@ -56,6 +56,25 @@ class SensorConfig:
 class BacktestConfig:
     export_rate_per_kwh: float = 0.15
     buyback_rate_per_kwh: float = 0.28
+    # Both optional; wear-adjusted economics are opt-in (see wear_cost_per_kwh below).
+    # Sourced from the battery's throughput warranty, not a cycle-count spec — BYD's
+    # Battery-Box Premium warrants by cumulative kWh throughput, not cycles.
+    battery_replacement_cost_aud: float | None = None
+    battery_throughput_warranty_kwh: float | None = None
+
+    @property
+    def wear_cost_per_kwh(self) -> float | None:
+        """$/kWh of battery throughput (replacement cost ÷ warranted lifetime
+        throughput), or None if either input is unset. This is the cost charged
+        against every kWh discharged — export or self-consumption alike — so it
+        prices what a kWh of *export* actually costs the battery, independent of
+        the export/buyback tariff question `accum_night` otherwise scores.
+        """
+        cost = self.battery_replacement_cost_aud
+        throughput = self.battery_throughput_warranty_kwh
+        if cost is None or throughput is None:
+            return None
+        return cost / throughput
 
 
 @dataclass
@@ -192,9 +211,17 @@ def load_config(path: Path) -> Config:
     )
 
     backtest_raw = raw.get("backtest") or {}
+    replacement_cost = backtest_raw.get("battery_replacement_cost_aud")
+    throughput_warranty = backtest_raw.get("battery_throughput_warranty_kwh")
     backtest = BacktestConfig(
         export_rate_per_kwh=float(backtest_raw.get("export_rate_per_kwh", 0.15)),
         buyback_rate_per_kwh=float(backtest_raw.get("buyback_rate_per_kwh", 0.28)),
+        battery_replacement_cost_aud=(
+            float(replacement_cost) if replacement_cost is not None else None
+        ),
+        battery_throughput_warranty_kwh=(
+            float(throughput_warranty) if throughput_warranty is not None else None
+        ),
     )
 
     m = _require_section(raw, "model", path)

@@ -7,7 +7,7 @@ expected column values. Tests assert within the tolerances in CLAUDE.md:
 """
 
 FIXTURES: dict[str, dict] = {
-    # Feb 7, 2026 — AEDT, sunny, full battery, amber, curtailed
+    # Feb 7, 2026 — AEDT, sunny, full battery, amber
     "2026-02-07": {
         "provider": "amber",
         "absence_period": 0,
@@ -41,9 +41,8 @@ FIXTURES: dict[str, dict] = {
         "battery_discharged_wh": 3399,
         "evening_grid_export_wh": 1812,
         "consumption_wh": 5800,
-        "curtailment_likely": 1,
     },
-    # Mar 20, 2026 — AEDT, cloudy, deep discharge, amber, no curtailment
+    # Mar 20, 2026 — AEDT, cloudy, deep discharge, amber
     "2026-03-20": {
         "provider": "amber",
         "absence_period": 0,
@@ -77,9 +76,8 @@ FIXTURES: dict[str, dict] = {
         "battery_discharged_wh": 5090,
         "evening_grid_export_wh": 0,
         "consumption_wh": 7271,
-        "curtailment_likely": 0,
     },
-    # Jul 17, 2025 — AEST, winter, depleted, ea, no curtailment
+    # Jul 17, 2025 — AEST, winter, depleted, ea
     "2025-07-17": {
         "provider": "ea",
         "absence_period": 0,
@@ -113,7 +111,6 @@ FIXTURES: dict[str, dict] = {
         "battery_discharged_wh": 5806,
         "evening_grid_export_wh": 1,
         "consumption_wh": 13543,
-        "curtailment_likely": 0,
     },
 }
 

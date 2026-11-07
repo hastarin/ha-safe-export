@@ -11,7 +11,7 @@ The example template is `config/config.example.yaml`.
 
 **Phase 3: Home Assistant integration — underway.**
 Phase 1 (data extraction) and Phase 2 (modelling, `src/model.py` four-zone predictor + `predict()`, economic backtest in `tools/backtest.py`) are both complete.
-The dataset is at **schema v1.6.0** — Phase 3 work has begun adding the live-flow forecast inputs (`forecast_temp_mean`/`forecast_humidity_mean`, v1.5.0 → v1.6.0) so the dataset can eventually be scored on the same forecast the live flow decides on.
+The dataset is at **schema v1.7.0** — Phase 3 work has begun adding the live-flow forecast inputs (`forecast_temp_mean`/`forecast_humidity_mean`, v1.5.0 → v1.6.0) so the dataset can eventually be scored on the same forecast the live flow decides on; v1.7.0 dropped the misleading `curtailment_likely` flag.
 Full deployment is deferred to September 2026.
 
 The dataset DB is the contract between Phase 1 and Phase 2; the trained model + `predict()` function is the contract between Phase 2 and Phase 3.
@@ -22,6 +22,27 @@ The dataset DB is the contract between Phase 1 and Phase 2; the trained model + 
 - `docs/DATASET.md` — **the canonical data spec.** Sensor mappings, window definitions, column formulas, validation samples
 - `docs/DECISIONS.md` — why each design choice was made (do not "improve" these without strong justification and discussion)
 - `docs/analysis/` — background analysis docs useful for modelling context: `ENERGY_ANALYSIS.md` (three-zone model selection rationale, statistical findings), `PHASE_1_SCHEMA_UPDATE.md` (sensor coverage and schema evolution log), and `LIVE_INTEGRATION.md` (Phase 3 deployment surface: the five Node-RED model-input sensors, the `grid_export_*` execution chain, and the long-term-statistics recording requirement)
+
+## Live Home Assistant access via MCP (optional, local-only)
+
+If a `.mcp.json` is present locally (it's gitignored — not every clone or cloud session will have it), a session may also have an `ha-mcp` server: a live connection to the running Home Assistant instance, distinct from the `home-assistant-db`/`dataset-db` SQLite MCP servers that read DB files directly.
+Don't assume it's connected — check the available tools before relying on it, and fall back to the raw `home-assistant_v2.db` queries below if it isn't there.
+**Don't assume it's read-only, either** — that's a per-server config choice, not a guarantee of the tool itself.
+Before using it, check whether its tool descriptions/instructions say write tools are disabled (as they currently do on this install); if not, or if unsure, treat it as capable of writing to the live HA instance and stick to read-oriented calls (`ha_get_history`, `ha_get_state`, `ha_search`, `ha_config_get_*`) rather than anything that calls a service or changes config.
+
+Prefer `ha-mcp` over hand-rolled SQLite queries against `home-assistant_v2.db` for:
+
+- **Gotcha #6 audits** — "is sensor X actually in long-term `statistics`, and does it have recent/gapless rows?" Use `ha_get_history(source="statistics", entity_ids=[...], period="day")` instead of joining `statistics_meta` manually; it returns clean labeled series with local-time metadata already applied.
+- **Reconstructing what the live flow decided on a past night** — pull the five model-input sensors (`docs/analysis/LIVE_INTEGRATION.md`) directly by entity_id via `ha_get_history(source="statistics", ...)`, no `statistics_meta` id lookup needed.
+- **Current entity state/config lookups** — e.g. disambiguating sensors (there are two `byd…state_of_charge` entities; only the unsuffixed one is what `nodered-flow.json` reads), checking an automation/script/helper body, or confirming a sensor exists at all. Use `ha_search` / `ha_get_state` / `ha_config_get_automation` rather than grepping the HA DB's `states_meta`/`statistics_meta` tables.
+
+Still use the raw `home-assistant_v2.db` (via `home-assistant-db` MCP or direct sqlite) for:
+
+- Phase 1 extraction logic and anything the extract script itself queries — that's the actual data path being tested, not a one-off audit.
+- History older than what `statistics` retains for non-`state_class` sensors, or raw `states`-table detail beyond the ~10-day window `ha-mcp`'s `source="history"` also caps out at.
+- Anything requiring the dataset DB (`dataset.db`) — unrelated to `ha-mcp` entirely; keep using `dataset-db`.
+
+`ha-mcp`'s `source="history"` (the default, not `"statistics"`) has the same ~8–10 day retention as the `states` table — it does not extend gotcha #6's window, it just saves you writing the SQL.
 
 ## Critical gotchas
 
@@ -75,6 +96,7 @@ To reconstruct or backtest what the live system actually decided on a past night
 Do not assume a sensor is recorded just because it exists — check `statistics_meta` for it.
 A sensor that exists in `states` but not `statistics`, or that goes `unknown`/`unavailable` at the top of the hour, will leave gaps you cannot recover.
 (A 2026-05-31 audit found three of the five silently unrecorded; `docs/analysis/LIVE_INTEGRATION.md` has the HA-config causes and fixes.)
+If the `ha-mcp` server is connected (see "Live Home Assistant access via MCP" above), `ha_get_history(source="statistics", ...)` does this check without hand-joining `statistics_meta`.
 
 **Also: the live temp input is a _forecast_ (Truganina hourly), not BOM.**
 The dataset's `bom_temp_mean` is BOM **actuals** over the same 6pm–11am window — a _different source_.
@@ -90,14 +112,15 @@ See `docs/DECISIONS.md` ("model-quality benchmark, not a live-performance predic
 - SQL parameter binding always (never string interpolation into queries)
 - Connect to the HA DB read-only: `sqlite3.connect(f"file:{path}?mode=ro", uri=True)`
 - The dataset DB is the project's own SQLite file, separate from the HA DB
-- Fix markdown lint errors via the `fix-markdown` skill (committed at `.claude/skills/fix-markdown/`, so it's available in every clone/cloud session), not by hand — never hand-align a table's pipes (models reliably miscount characters against MD060's "aligned" style; the skill's script re-renders tables deterministically instead)
+- Committed skills live in `.claude/skills/`, so they are available in every clone/cloud session: `fix-markdown` (below) and `work-issue` (drive one GitHub issue end-to-end to a PR that closes it — the intended entry point for cloud sessions).
+- Fix markdown lint errors via the `fix-markdown` skill, not by hand — never hand-align a table's pipes (models reliably miscount characters against MD060's "aligned" style; the skill's script re-renders tables deterministically instead)
 - Windows console is cp1252: a script that `print()`s non-ASCII (e.g. the `α` in a backtest scenario label) raises `UnicodeEncodeError`. The project tools write UTF-8 files fine — this only bites ad-hoc scripts printing to the terminal. Prefix such runs with `PYTHONIOENCODING=utf-8` (the dev box also sets this as a user env var, but don't rely on that being present)
 - GitHub operations: prefer the `gh-axi` skill if it's installed. Otherwise fall back to plain `gh`. Otherwise use native GitHub MCP tools if the session has them. Nested/structured JSON bodies that don't fit `gh-axi`'s flat `--field` pairs are the one standing exception — use `gh api ... --input -` for those.
 - When fetching an issue or PR body with `gh-axi issue view` / `pr view`, always pass `--full` on the first fetch. The default view truncates the body, and re-fetching without `--full` first just doubles the round-trip for no reason.
 - Use the Bash tool (not PowerShell) for shell commands in this project.
 - When writing commit messages, NEVER add your agent name as co-author or mention agent involvement.
 - When writing or substantially editing long Markdown files (`docs/*.md` and this `CLAUDE.md`), put each full sentence on its own line — preserve normal Markdown structure, but avoid wrapping multiple sentences onto one physical line.
-- When fixing a bug in extraction or model logic, reproduce it first: write a failing test (extend `tests/fixtures.py`/`test_extract.py`/`test_model.py`, or add a minimal repro if none of the existing fixtures cover it) before writing the fix, so the fix is proven against the real defect rather than a guess.
+- When fixing a bug in extraction or model logic, reproduce it first: write a failing test (extend the relevant module under `tests/` — `fixtures.py`, `test_extract.py`, `test_model.py`, `test_flow_parity.py`, `test_sync.py` and five others — or add a minimal repro if none of the existing fixtures cover it) before writing the fix, so the fix is proven against the real defect rather than a guess.
 - `config/config.yaml` is gitignored because it contains personal sensor names, battery details, and absence-period history. Never print/echo its contents, paste it into a commit message, PR body, or issue, or otherwise let its values leave the local session.
 - Route open-ended searches ("find where X is defined", "which files reference Y") through the `Explore` subagent rather than reading/grepping files directly in the main thread. Its results come back as a short summary instead of full file dumps, which keeps the main session's context small — this matters because sessions in this repo run long (extraction, modelling, tests, docs all in one sitting) and unnecessary full-file reads are what drives context/token usage up, not skills or agents themselves. Reserve direct Read/Grep for when you already know the exact file and location.
 - Prefer minimal, scoped edits. Do not over-engineer, add subagents, or edit correct sentences unless explicitly asked.
@@ -115,22 +138,12 @@ Tolerances: ±0.1 for percentages and temperatures, ±1 Wh for energies.
 
 A passing run of `pytest` is the bar for any change to extraction logic.
 Before committing, run lint and the full test suite; only commit when both pass.
+CI (`.github/workflows/ci.yml`) runs `ruff check .` → `pytest` → `mypy`; the mypy gate over `src/` is **non-blocking**, so its findings are advisory rather than merge blockers.
 
 ## Common commands
 
-```bash
-# Run all tests
-.venv/Scripts/python -m pytest
-
-# Incremental extraction (append new days since last run)
-.venv/Scripts/python -m src.extract data/home-assistant_v2.db
-
-# Full rebuild of the dataset DB
-.venv/Scripts/python -m src.extract data/home-assistant_v2.db --rebuild
-
-# Economic backtest (outputs tools/backtest_report.html and tools/backtest_report.json)
-.venv/Scripts/python -m tools.backtest
-```
+See [Command cheat sheet](README.md#command-cheat-sheet) in `README.md`; run everything through `.venv/Scripts/python -m ...`.
+mypy is not in the venv by default (CI installs it) — `pip install mypy` first if you want the advisory type check locally.
 
 ## Repository structure
 
@@ -139,18 +152,6 @@ See [Project structure](README.md#project-structure) in `README.md` for the anno
 Note on `src/migrations/`: these are a historical record and are **not** auto-applied.
 `schema.sql` is the source of truth; `--rebuild` recreates the DB from it.
 They exist only for hand-upgrading an existing old DB in place.
-
-## Incremental behaviour
-
-The extract script must be incremental:
-
-1. On startup, ensure the dataset DB exists (create from `schema.sql` if not).
-2. Read `MAX(date) FROM daily_observations`. Default to `2023-11-28` (first complete window after commissioning) if empty.
-3. Compute and `INSERT OR REPLACE` rows from `MAX(date) + 1` through yesterday (today's window is incomplete).
-4. Update `extraction_meta` with `last_full_extraction = now()`.
-
-Provide a `--rebuild` flag that drops and re-extracts all rows.
-Useful when methodology changes.
 
 ## Changelog
 

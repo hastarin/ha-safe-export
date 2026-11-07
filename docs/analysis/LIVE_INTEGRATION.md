@@ -7,7 +7,7 @@ the automation/script bodies live in the user's HA config (not in this repo).
 
 > The Node-RED flow is the low-cost stand-in for the eventual native HA integration. It is
 > meant to mirror `src/model.py` exactly (see CLAUDE.md "Model coefficients are duplicated
-> in three places"). This doc covers the **plumbing around** the model, not the model itself.
+> in two places"). This doc covers the **plumbing around** the model, not the model itself.
 
 ## The five model inputs (Node-RED reads these at ~18:00)
 
@@ -53,12 +53,13 @@ acting on stale data from a previous successful run.
 The flow does **not** drive the battery directly. It writes a result; a chain of HA helpers,
 automations, and scripts decides whether and how to export.
 
-1. **Node-RED** writes a JSON payload to `input_text.safe_export_detail` (~18:00). A
-   trigger-based template sensor (in the user's `forecasts.yaml`) parses it and populates
-   `input_number.safe_export_wh`.
-2. **`automation.grid_export_copy_forecast_to_target`** watches `input_number.safe_export_wh`,
-   but **only acts in the 17:55–18:05 window**. It copies the value (clamped to 0–8000 Wh)
-   into `input_number.grid_export_target_wh`.
+1. **Node-RED** writes the P50 figure directly to `input_number.safe_export_wh` and a compact
+   JSON summary to `input_text.safe_export_detail` (~18:00), as two separate action calls.
+2. **`automation.grid_export_copy_forecast_to_target`** watches `input_text.safe_export_detail`,
+   but **only acts in the 17:55–18:05 window**. It copies `p50` from the JSON (clamped to
+   0–6000 Wh) into `input_number.grid_export_target_wh`; invalid JSON or a missing `p50` writes 0.
+   It triggers on the detail text because its `at` timestamp changes on every run, whereas a
+   repeated forecast leaves `safe_export_wh` unchanged and fires nothing.
 3. **`automation.grid_export_start_at_scheduled_time`** fires at the time stored in
    `input_datetime.grid_export_start_time` (currently 18:01) and calls `script.grid_export_start`
    **only if** target > 0, SoC is above the min, and the end time is still in the future.
@@ -89,22 +90,22 @@ automations, and scripts decides whether and how to export.
   `target > 0` guard then prevents a session. Verified end-to-end for 2026-05-30
   (forecast temp 9.3 °C, SoC 96.2%, minSoc 10% → need ~14.3 kWh > 11.9 kWh available → 0).
 
-### Freshness backstop: the sunrise / HA-start reset (added 2026-07-04, issue #37)
+### Freshness backstop: the sunrise reset (added 2026-07-04, issue #37)
 
 The copy automation (step 2 above) only runs in the 17:55–18:05 window, so a stale
-`safe_export_wh` value from a previous night could in principle be propagated into
+`safe_export_detail` value from a previous night could in principle be propagated into
 `input_number.grid_export_target_wh` if Node-RED or the HA websocket were down at 18:00.
 
 This freshness risk is mitigated upstream by an HA automation (in the owner's HA config,
-not this repo) that **resets `input_number.grid_export_target_wh` to 0 at sunrise and on HA
-start**.
+not this repo) that **resets `input_number.grid_export_target_wh` to 0 at sunrise**.
+It deliberately has no HA-start trigger, because that zeroed a running session.
 
 This is the freshness defence for the chain:
 
 - It re-zeroes the export target before each day's window, so a failed or stale Node-RED run
   cannot leave an export sized on old data in place for the next evening.
 - Only a fresh in-window copy (step 2, 17:55–18:05) repopulates it — and only from a freshly
-  written `safe_export_wh`.
+  written `safe_export_detail`.
 - The copy automation therefore does not need its own timestamp-freshness check; the daily
   reset is the single source of truth for "is this target from today?".
 

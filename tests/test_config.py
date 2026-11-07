@@ -66,3 +66,38 @@ def test_missing_section_raises_value_error(tmp_path: Path):
     message = str(exc_info.value)
     assert str(config_path) in message
     assert "model" in message
+
+
+# ---------------------------------------------------------------------------
+# BacktestConfig.wear_cost_per_kwh — opt-in wear-adjusted economics
+# ---------------------------------------------------------------------------
+
+
+def test_wear_cost_unset_by_default():
+    # config.example.yaml doesn't set either wear-cost key.
+    cfg = load_config(EXAMPLE_CONFIG)
+    assert cfg.backtest.battery_replacement_cost_aud is None
+    assert cfg.backtest.battery_throughput_warranty_kwh is None
+    assert cfg.backtest.wear_cost_per_kwh is None
+
+
+def test_wear_cost_computed_when_both_keys_set(tmp_path: Path):
+    raw = yaml.safe_load(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
+    raw["backtest"]["battery_replacement_cost_aud"] = 13000
+    raw["backtest"]["battery_throughput_warranty_kwh"] = 42690
+    config_path = _write_config(tmp_path, raw)
+
+    cfg = load_config(config_path)
+    assert cfg.backtest.battery_replacement_cost_aud == 13000.0
+    assert cfg.backtest.battery_throughput_warranty_kwh == 42690.0
+    assert cfg.backtest.wear_cost_per_kwh == pytest.approx(13000 / 42690)
+
+
+def test_wear_cost_none_when_only_one_key_set(tmp_path: Path):
+    # Half-configured is treated as unset, not a partial/garbage value.
+    raw = yaml.safe_load(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
+    raw["backtest"]["battery_replacement_cost_aud"] = 13000
+    config_path = _write_config(tmp_path, raw)
+
+    cfg = load_config(config_path)
+    assert cfg.backtest.wear_cost_per_kwh is None
