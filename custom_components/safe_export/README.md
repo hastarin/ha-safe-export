@@ -42,6 +42,7 @@ The names deliberately avoid the Node-RED helpers (`input_number.safe_export_wh`
 | Battery capacity (kWh)              | —                                              | Typed in, not a sensor                   |
 
 These are the same five sensors the Node-RED flow reads (gotcha #6 in `CLAUDE.md`).
+The two overnight forecast sensors are template sensors you add yourself: see [Home Assistant template sensors](../../docs/TEMPLATE_SENSORS.md).
 Solcast may be reported in kWh, Wh or MWh, and a missing unit is taken as kWh, as the flow does.
 The sensors and capacity can be changed later under the integration's **Configure** option.
 
