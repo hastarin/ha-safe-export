@@ -8,12 +8,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is the project floor (the oldest Python the integration's minimum
+        # Home Assistant runs on); 3.14 is what development uses.
+        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: pip install -e ".[tools]" ruff pytest mypy

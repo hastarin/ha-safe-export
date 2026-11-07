@@ -385,7 +385,7 @@ print(result.reasoning)
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.13+
 - A Home Assistant installation with at least 12 months of recorded statistics for the sensors listed in `docs/DATASET.md`
 - SQLite (bundled with Python; no separate install needed)
 - For Phase 2 onwards: Solcast PV forecasting integration in HA, plus a weather forecast integration
