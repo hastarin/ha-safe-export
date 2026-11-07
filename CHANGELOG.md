@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Integration icon.** `custom_components/safe_export/brand/` holds `icon.png` (256 px) and `icon@2x.png` (512 px), rendered from `icon.svg`: a navy shield with an orange rim around a battery with three charge bars. Home Assistant 2026.3+ serves brand images from this folder for custom integrations, replacing the "icon not available" placeholder.
+
 ## [1.7.0] — 2026-11-07
 
 First GitHub release, and the first version of the `safe_export` integration offered through the Home Assistant Marketplace.
