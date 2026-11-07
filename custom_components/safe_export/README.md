@@ -28,6 +28,10 @@ If you fork it, retrain on your own history and replace `coefficients.json` (see
 
 Each `p50`–`p95` attribute holds `safe_export` (Wh), `consumption`, `buffer`, `total_needed` and `grid_needed` (kWh), the same shape as the Node-RED flow's `msg.result`.
 
+The entity IDs shown here are for a device with no area.
+Since Home Assistant 2026.8, new entity IDs start with the device's area when it has one, so a device added to a Garage area gets `sensor.garage_safe_export_p50` and so on.
+The actual IDs are listed on the Safe Export device page, and they stay the same if the device later moves to another area.
+
 The names deliberately avoid the Node-RED helpers (`input_number.safe_export_wh`, `input_text.safe_export_detail`), so both can run side by side during the shadow stage.
 
 ## Inputs
