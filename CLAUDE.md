@@ -105,7 +105,7 @@ See `docs/DECISIONS.md` ("model-quality benchmark, not a live-performance predic
 
 ## Conventions
 
-- Python 3.11+
+- Python 3.13+
 - Type hints on all public functions
 - `ruff` for lint, `pytest` for tests
 - All datetimes are timezone-aware; never use naive datetimes
