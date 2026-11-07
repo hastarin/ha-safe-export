@@ -80,6 +80,9 @@ ha-safe-export/
 ├── README.md             ← This file
 ├── CHANGELOG.md          ← Version history (Keep a Changelog format)
 ├── TODO.md               ← Working notes and live-testing follow-ups
+├── hacs.json             ← HACS custom-repository metadata for the integration
+├── custom_components/
+│   └── safe_export/      ← Home Assistant integration: runs predict() at 6pm (replacing Node-RED, issue #53)
 ├── config/
 │   ├── config.example.yaml ← Template config
 │   └── config.yaml         ← gitignored; your sensor names, coefficients, and history
@@ -99,7 +102,8 @@ ha-safe-export/
 │   ├── fixtures.py       ← Known-good values for three validation days
 │   ├── test_extract.py   ← Extraction fixture tests
 │   ├── test_model.py     ← Model unit and regression tests
-│   └── test_sync.py      ← Enforces coefficient parity across config.yaml/conftest.py/nodered-flow.json/model.py
+│   └── test_sync.py      ← Enforces coefficient parity across config.yaml/conftest.py/nodered-flow.json/model.py/coefficients.json
+├── tests_ha/             ← Integration tests under Home Assistant's test harness (separate Python 3.14 venv)
 ├── tools/
 │   ├── backtest.py       ← Economic backtest; outputs backtest_report.html/.json
 │   ├── retrain.py        ← Refits the four-zone model from the dataset

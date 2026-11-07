@@ -168,18 +168,20 @@ Add the new entry under `## [Unreleased]` at the top; move it to a dated version
 **Version bumping:** the single source of truth is `__version__` in `src/__init__.py` (`pyproject.toml` reads it dynamically; convention: it tracks the dataset schema version).
 Bump it in the same commit as any behavioural change to extraction or model logic — it is stamped into every dataset row as `extraction_version`, and a stale value makes rows unattributable to the logic that produced them.
 
-## Model coefficients are duplicated in two places — keep them in sync
+## Model coefficients are duplicated in three places — keep them in sync
 
-The four-zone model is implemented **twice**.
-Any change to coefficients, percentile tables, or buffers must be applied to both or they silently diverge:
+The four-zone model is implemented **twice** (Python and JavaScript), and the Python copy is also bundled into the integration.
+Any change to coefficients, percentile tables, or buffers must be applied to all three or they silently diverge:
 
 1. `src/model.py` + `config/config.yaml` — the canonical Python predictor (the Phase 2→3 contract). `config.yaml` holds the numbers; `tests/conftest.py` carries a synced copy used by the tests.
 2. `tools/nodered-flow.json` — the **live** 6pm export automation. Embeds coefficients inline in the "Four-zone model" function node.
+3. `custom_components/safe_export/` — the Home Assistant integration replacing Node-RED (issue #53). `coefficients.json` holds the numbers; `model.py` is a byte-identical copy of `src/model.py` (copy it over after any `src/model.py` change).
 
-Retrain with `tools/retrain.py` (needs the `tools` extra — `pip install -e ".[tools]"`, numpy), review, then update `config.yaml`, `tests/conftest.py`, and `nodered-flow.json` together.
+Retrain with `tools/retrain.py` (needs the `tools` extra — `pip install -e ".[tools]"`, numpy), review, then update `config.yaml`, `tests/conftest.py`, `nodered-flow.json`, and `custom_components/safe_export/coefficients.json` together.
 `retrain.py`'s output includes a consumption-floor check (`MIN_CONSUMPTION_KWH`, see `docs/DECISIONS.md` "Consumption-floor clamp on OLS zones") — if it reports the floor would bind on any historical night, the fit is suspect; investigate before deploying.
 
-Sync between `config.yaml`/`tests/conftest.py`, `nodered-flow.json`, and the `model.py` confidence ladder is enforced by `tests/test_sync.py`.
+Sync between `config.yaml`/`tests/conftest.py`, `nodered-flow.json`, `coefficients.json`, the bundled `model.py`, and the `model.py` confidence ladder is enforced by `tests/test_sync.py`.
+The integration's own tests live in `tests_ha/` and need the `ha` extra in a separate Python 3.14 Linux/WSL venv (Home Assistant does not run on Windows); `pytest tests_ha` skips in the main venv.
 
 **Redeploy after editing these:** changing `nodered-flow.json` in the repo does NOT update what is running.
 You must re-import the flow into Node-RED for changes to take effect.
