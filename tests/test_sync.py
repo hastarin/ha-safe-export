@@ -1,5 +1,9 @@
 """Coefficient-parity test: config/conftest vs nodered-flow.json vs model.py ladder.
 
+Also checks the Home Assistant integration's copies: the bundled
+custom_components/safe_export/model.py must be byte-identical to src/model.py, and
+its coefficients.json must carry exactly the test_cfg model values.
+
 The four-zone model coefficients are hand-copied into three places (see CLAUDE.md
 "Model coefficients are duplicated in three places"): config/config.yaml (canonical,
 gitignored), tests/conftest.py's test_cfg fixture (documented synced copy), and the
@@ -26,6 +30,9 @@ from src.config import load_config
 from src.model import CONFIDENCE_SCALE, MIN_CONSUMPTION_KWH
 
 FLOW_JSON = Path("tools/nodered-flow.json")
+BUNDLED_MODEL = Path("custom_components/safe_export/model.py")
+CANONICAL_MODEL = Path("src/model.py")
+COEFFICIENTS_JSON = Path("custom_components/safe_export/coefficients.json")
 REAL_CONFIG = Path("config/config.yaml")
 SCHEMA_SQL = Path("src/schema.sql")
 
@@ -189,6 +196,33 @@ def test_nodered_flow_consumption_floor_matches_model_py():
         f"Consumption floor drifted: nodered-flow.json MIN_CONSUMPTION_KWH={flow_val!r} "
         f"vs src/model.py MIN_CONSUMPTION_KWH={MIN_CONSUMPTION_KWH!r}"
     )
+
+
+def test_bundled_model_is_identical_to_src_model():
+    """The integration runs its own copy of src/model.py; it must not drift.
+
+    Home Assistant loads custom_components/safe_export/ on its own, without this
+    repo's src/ package on the path, so the model is bundled as a file copy. Fix a
+    failure by copying src/model.py over the bundled file, never the reverse.
+    """
+    assert BUNDLED_MODEL.read_bytes() == CANONICAL_MODEL.read_bytes(), (
+        f"{BUNDLED_MODEL} differs from {CANONICAL_MODEL}: run "
+        f"`cp {CANONICAL_MODEL} {BUNDLED_MODEL}`"
+    )
+
+
+def test_coefficients_json_matches_test_cfg(test_cfg):
+    """The integration's coefficients file carries exactly the ModelConfig fields."""
+    model = json.loads(COEFFICIENTS_JSON.read_text(encoding="utf-8"))["model"]
+    expected = {f.name: getattr(test_cfg.model, f.name) for f in fields(test_cfg.model)}
+    assert set(model) == set(expected), (
+        f"{COEFFICIENTS_JSON} keys drifted from ModelConfig: "
+        f"missing {sorted(set(expected) - set(model))}, extra {sorted(set(model) - set(expected))}"
+    )
+    for key, cfg_val in expected.items():
+        assert model[key] == cfg_val, (
+            f"{key} drifted: {COEFFICIENTS_JSON}={model[key]!r} vs test_cfg={cfg_val!r}"
+        )
 
 
 def test_schema_sql_header_matches_version():

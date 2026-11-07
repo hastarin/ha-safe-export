@@ -1,0 +1,82 @@
+{
+  "config": {
+    "abort": {
+      "single_instance_allowed": "Safe Export is already configured."
+    },
+    "error": {
+      "duplicate_entity": "Each input must be a different entity."
+    },
+    "step": {
+      "user": {
+        "title": "Safe Export",
+        "description": "Choose the five sensors the 6pm prediction reads, and the battery's usable capacity.",
+        "data": {
+          "temp_entity": "Overnight forecast temperature mean",
+          "humidity_entity": "Overnight forecast humidity mean",
+          "solcast_entity": "Solcast forecast for tomorrow",
+          "soc_entity": "Battery state of charge",
+          "min_soc_entity": "Battery minimum state of charge",
+          "battery_capacity_kwh": "Battery capacity"
+        },
+        "data_description": {
+          "temp_entity": "Forecast mean temperature (°C) for 6pm to 11am. Required: the run fails closed without it.",
+          "humidity_entity": "Forecast mean relative humidity (%) for 6pm to 11am. Optional at run time: the cooling zone falls back to a temperature-only model.",
+          "solcast_entity": "Tomorrow's PV forecast (kWh). Optional at run time: the heating zone falls back to a temperature-only model.",
+          "soc_entity": "Current battery state of charge (%). Required.",
+          "min_soc_entity": "The battery's minimum discharge floor (%). Required.",
+          "battery_capacity_kwh": "Capacity used to convert state of charge into energy."
+        }
+      }
+    }
+  },
+  "options": {
+    "error": {
+      "duplicate_entity": "Each input must be a different entity."
+    },
+    "step": {
+      "init": {
+        "title": "Safe Export",
+        "description": "Change the input sensors or battery capacity. The integration reloads when you save.",
+        "data": {
+          "temp_entity": "Overnight forecast temperature mean",
+          "humidity_entity": "Overnight forecast humidity mean",
+          "solcast_entity": "Solcast forecast for tomorrow",
+          "soc_entity": "Battery state of charge",
+          "min_soc_entity": "Battery minimum state of charge",
+          "battery_capacity_kwh": "Battery capacity"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "p50": {
+        "name": "P50"
+      },
+      "detail": {
+        "name": "Detail",
+        "state": {
+          "heating": "Heating",
+          "warm_boundary": "Warm boundary",
+          "mild": "Mild",
+          "cooling": "Cooling",
+          "error": "Error"
+        }
+      },
+      "last_run": {
+        "name": "Last run"
+      }
+    },
+    "button": {
+      "run_now": {
+        "name": "Run now"
+      }
+    }
+  },
+  "services": {
+    "run": {
+      "name": "Run prediction",
+      "description": "Runs the safe-export prediction now and updates the Safe Export sensors."
+    }
+  }
+}

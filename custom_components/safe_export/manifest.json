@@ -1,0 +1,13 @@
+{
+  "domain": "safe_export",
+  "name": "Safe Export",
+  "codeowners": ["@hastarin"],
+  "config_flow": true,
+  "documentation": "https://github.com/hastarin/ha-safe-export/blob/main/custom_components/safe_export/README.md",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/hastarin/ha-safe-export/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

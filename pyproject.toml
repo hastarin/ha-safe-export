@@ -16,6 +16,12 @@ dependencies = [
 tools = [
     "numpy>=2.4.6",
 ]
+# Home Assistant integration tests (tests_ha/). The harness pins a Home Assistant
+# release and needs the Python that release needs (3.14 for 2026.10), and HA does
+# not run on Windows, so install this in its own Linux/WSL venv, not the main one.
+ha = [
+    "pytest-homeassistant-custom-component==0.13.375",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "src.__version__"}

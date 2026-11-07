@@ -1,0 +1,26 @@
+{
+  "_comment": "Four-zone model coefficients. Refit 2026-05-22 with tools/retrain.py. A fork replaces this one file after retraining on its own history. Keys are the src/config.py ModelConfig fields; tests/test_sync.py checks them against tests/conftest.py and tools/nodered-flow.json.",
+  "fitted": "2026-05-22",
+  "model": {
+    "heating_intercept": 22.5759,
+    "heating_b_temp": -0.9593,
+    "heating_b_solcast": -0.016243,
+    "heating_temp_only_intercept": 22.4741,
+    "heating_temp_only_b_temp": -1.0043,
+    "cooling_intercept": -9.6822,
+    "cooling_b_temp": 0.7163,
+    "cooling_b_humidity": 0.028676,
+    "cooling_temp_only_intercept": -5.1760,
+    "cooling_temp_only_b_temp": 0.5965,
+    "mild_p50": 6.796,
+    "mild_p75": 7.840,
+    "mild_p90": 8.514,
+    "mild_p95": 9.002,
+    "warm_boundary_p50": 5.979,
+    "warm_boundary_p75": 6.808,
+    "warm_boundary_p90": 7.783,
+    "warm_boundary_p95": 8.783,
+    "heating_p95_buffer_kwh": 2.649,
+    "cooling_p95_buffer_kwh": 2.431
+  }
+}

@@ -27,3 +27,21 @@ jobs:
       - name: Type check (non-blocking)
         run: mypy
         continue-on-error: true
+
+  integration:
+    # The Safe Export custom integration, under Home Assistant's own test harness.
+    # Separate job: the harness pins an HA release that needs a newer Python than
+    # the main suite targets.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install -e ".[ha]"
+
+      - name: Test integration
+        run: pytest tests_ha
