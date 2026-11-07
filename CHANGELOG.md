@@ -5,7 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-11-07
+
+First GitHub release, and the first version of the `safe_export` integration offered through the Home Assistant Marketplace.
+From this release the integration's `manifest.json` version tracks `__version__`, and a GitHub release is published only when the integration changes, so a dataset-only version bump does not prompt an update.
+
 ### Changed
+
+- **The integration's `manifest.json` version now matches `__version__` (0.1.0 → 1.7.0), enforced by `tests/test_sync.py`.**
+- **The README warns that the model is fitted to one household, and its Node-RED, template sensor and manual prediction guides moved to `docs/NODERED.md`, `docs/TEMPLATE_SENSORS.md` and `docs/MANUAL_PREDICTION.md`.** Install steps now point to Settings → Marketplace, which replaced HACS in Home Assistant 2026.11.
 
 - **Minimum Python raised from 3.11 to 3.13.** Python 3.11 has had security fixes only since April 2024 and reaches end of life in October 2027. 3.13 is the oldest Python the Safe Export integration's minimum Home Assistant (2025.8) runs on, and the bundled `model.py` has to keep working there. `requires-python`, ruff's `target-version` and mypy's `python_version` are now 3.13, and the main CI job runs on both 3.13 and 3.14. Ruff's pyupgrade rules found nothing to change at the new target.
 - **`Config.sensor_ids` and `src/extract.py`'s `_OPTIONAL_SENSORS` are now derived from `SensorConfig`'s dataclass fields instead of hand-maintained in three places (issue #39).** `sensor_ids` iterates `fields(self.sensors)`; `_OPTIONAL_SENSORS` is the set of fields whose dataclass default is `None` (which is exactly what "optional sensor" means here). Adding a sensor to `SensorConfig` now propagates to extraction automatically — previously forgetting it in `sensor_ids` meant a silently-NULL column, and forgetting it in `_OPTIONAL_SENSORS` meant a hard fail on installs lacking it. The derived set matches the previously-hardcoded `{guests, solcast, median_temp, median_humidity, forecast_temp, forecast_humidity}`; new tests in `tests/test_extract_synthetic.py` pin that contract.
