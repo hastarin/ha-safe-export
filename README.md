@@ -2,11 +2,19 @@
 
 [![CI](https://github.com/hastarin/ha-safe-export/actions/workflows/ci.yml/badge.svg)](https://github.com/hastarin/ha-safe-export/actions/workflows/ci.yml)
 
+> [!WARNING]
+> **Built for one household.**
+> The model's coefficients were fitted to a single home's battery, solar, climate and consumption history, so its export numbers are wrong for any other home.
+> To use this yourself, fork the repo, extract your own history, retrain with `tools/retrain.py`, and replace `custom_components/safe_export/coefficients.json` before installing your fork.
+> Installing this repository unchanged gives you someone else's model.
+> See [Forking and retraining](custom_components/safe_export/README.md#forking-and-retraining).
+
 Predict the maximum amount of energy that can be safely exported from a home battery during the evening peak, without leaving the home short before solar recovers the next morning.
 
 > **Status:** Phase 3 (Home Assistant integration) underway.
 > Phases 1 (data extraction) and 2 (modelling) are complete.
-> A Node-RED flow has run the model live at P50 confidence since 2026-05-22, as a low-cost stand-in for the eventual HACS integration (targeted September 2026).
+> A Node-RED flow has run the model live at P50 confidence since 2026-05-22.
+> The custom integration in `custom_components/safe_export/` is now shadowing it before cutover.
 
 ---
 
@@ -80,7 +88,7 @@ ha-safe-export/
 ├── README.md             ← This file
 ├── CHANGELOG.md          ← Version history (Keep a Changelog format)
 ├── TODO.md               ← Working notes and live-testing follow-ups
-├── hacs.json             ← HACS custom-repository metadata for the integration
+├── hacs.json             ← Marketplace (formerly HACS) custom-repository metadata for the integration
 ├── custom_components/
 │   └── safe_export/      ← Home Assistant integration: runs predict() at 6pm (replacing Node-RED, issue #53)
 ├── config/
@@ -126,11 +134,11 @@ The `DECISIONS.md` log is the most important one to consult before changing how 
 
 ## Phases
 
-| Phase                  | Deliverable                                                                                                                                                               | Status       |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (see `src/schema.sql` for the current version); passes three validation fixtures                       | **Complete** |
-| **2. Modelling**       | `src/model.py` — four-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3                                          | **Complete** |
-| **3. HA integration**  | Node-RED flow live at P50 confidence since 2026-05-22. A HACS component is a possible future step; whether it's worth building is an open trade-off, not a committed date | **Underway** |
+| Phase                  | Deliverable                                                                                                                                                                                         | Status       |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| **1. Data extraction** | `src/extract.py` builds an incrementally-updateable SQLite dataset (see `src/schema.sql` for the current version); passes three validation fixtures                                                 | **Complete** |
+| **2. Modelling**       | `src/model.py` — four-zone linear consumption model with calibrated P90/P95 uncertainty bounds; `predict()` callable for Phase 3                                                                    | **Complete** |
+| **3. HA integration**  | Node-RED flow live at P50 confidence since 2026-05-22. The `safe_export` custom integration is installed from the Home Assistant Marketplace and shadowing the flow before cutover (issues #53–#56) | **Underway** |
 
 ## Setup
 
@@ -254,13 +262,13 @@ The `event_template_reloaded` trigger fires immediately when you reload template
 
 **4. Update the sensor entity IDs.** The flow's state-reader nodes are pre-populated with the author's sensor names. Open each of the five "Get …" nodes and replace the entity ID with your own:
 
-| Node | Entity ID to replace | What it reads |
-| ---- | -------------------- | -------------- |
-| Get overnight temp | `sensor.overnight_forecast_temp_mean` | Your overnight temp template sensor (see above) |
-| Get overnight humidity | `sensor.overnight_forecast_humidity_mean` | Your overnight humidity template sensor (see above) |
-| Get Solcast tomorrow | `sensor.solcast_pv_forecast_forecast_tomorrow` | Your Solcast forecast entity |
-| Get battery SOC | `sensor.byd_battery_box_premium_hv_state_of_charge` | Your battery's state-of-charge sensor |
-| Get min SOC cutoff | `sensor.byd_battery_box_premium_hv_soc_minimum` | Your battery's minimum SOC sensor |
+| Node                   | Entity ID to replace                                | What it reads                                       |
+| ---------------------- | --------------------------------------------------- | --------------------------------------------------- |
+| Get overnight temp     | `sensor.overnight_forecast_temp_mean`               | Your overnight temp template sensor (see above)     |
+| Get overnight humidity | `sensor.overnight_forecast_humidity_mean`           | Your overnight humidity template sensor (see above) |
+| Get Solcast tomorrow   | `sensor.solcast_pv_forecast_forecast_tomorrow`      | Your Solcast forecast entity                        |
+| Get battery SOC        | `sensor.byd_battery_box_premium_hv_state_of_charge` | Your battery's state-of-charge sensor               |
+| Get min SOC cutoff     | `sensor.byd_battery_box_premium_hv_soc_minimum`     | Your battery's minimum SOC sensor                   |
 
 The flow fails closed (writes `safe_export = 0`, `zone: "error"`) both when a required sensor's state is `unknown`/`unavailable` and when a "Get …" node's entity ID doesn't exist at all (mistyped, renamed, or deleted). The latter case is handled by the "Catch sensor read errors" node, scoped to the five "Get …" nodes plus the model function node — any thrown error is caught and routed through the same fail-closed writer path, so the HA helpers always get a fresh `zone: "error"` result instead of holding a stale value from the previous run. Still double-check the five entity IDs above against Developer Tools → States after import.
 

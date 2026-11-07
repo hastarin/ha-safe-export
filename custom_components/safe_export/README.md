@@ -49,9 +49,9 @@ The sensors and capacity can be changed later under the integration's **Configur
 
 Installing this does not touch the existing export chain: nothing reads the new entities until cutover (issue #55).
 
-1. In Home Assistant, open **HACS**, then the three-dot menu, then **Custom repositories**.
-2. Add `https://github.com/hastarin/ha-safe-export` with type **Integration**.
-3. Find **Safe Export** in HACS, download it, and restart Home Assistant.
+1. In Home Assistant, open **Settings → Marketplace** (HACS before Home Assistant 2026.11), then the three-dot menu, then **Custom repositories**.
+2. Add `https://github.com/hastarin/ha-safe-export` (or your fork) with type **Integration**.
+3. Find **Safe Export** in the Marketplace, install it, and restart Home Assistant.
    Every update to the integration also needs a full restart.
 4. Go to **Settings → Devices & services → Add integration → Safe Export**, then pick the five sensors and enter the battery capacity.
 5. Press **Run now** once and check `sensor.safe_export_detail` against `input_text.safe_export_detail`.
