@@ -15,7 +15,10 @@ If you fork it, retrain on your own history and replace `coefficients.json` (see
 - Fails closed: a missing required input, or any error, publishes 0 Wh with zone `error` and a `reason`.
   It never leaves the previous night's value in place.
 - Falls back to the temperature-only model variants when Solcast (heating zone) or humidity (cooling zone) is unavailable, exactly as `src/model.py` does.
-- After a Home Assistant restart the sensors are `unknown` until the next run, so nothing stale is restored.
+- Restores the last value after a Home Assistant restart, so the sensors are not `unknown` until the next 18:00 run.
+  Each sensor has a `restored` attribute: `true` until a run happens after the restart, `false` after.
+  **An automation acting on these sensors must require `restored` to be `false`** (for example `{{ not state_attr('sensor.safe_export_detail', 'restored') }}`), or a restart shortly before 18:00 would act on the previous night's decision.
+  The restore itself changes the state from `unknown` to the old value, which fires a state trigger.
 
 ## Entities
 

@@ -9,10 +9,14 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+    mock_restore_cache_with_extra_data,
+)
 
 from custom_components.safe_export.const import DOMAIN
 
@@ -39,13 +43,79 @@ async def test_entities_created_and_unknown_until_first_run(
     for entity_id in (P50, DETAIL, LAST_RUN, RUN_NOW):
         assert registry.async_get(entity_id) is not None, entity_id
 
-    # Nothing is restored after a restart: no stale value until the next run.
+    # With nothing to restore there is no value until the first run.
     for entity_id in (P50, DETAIL, LAST_RUN):
         assert hass.states.get(entity_id).state == "unknown"
 
     p50 = hass.states.get(P50)
     assert p50.attributes["unit_of_measurement"] == "Wh"
     assert p50.attributes["state_class"] == "measurement"
+
+
+_LAST_RUN_AT = "2026-11-07T07:00:00+00:00"
+_DETAIL_ATTRS = {"zone": "heating", "p50": {"safe_export": 2057}, "reason": None}
+
+
+def _cache(entity_id: str, state: str, extra: dict) -> tuple:
+    return (State(entity_id, state), extra)
+
+
+async def _setup_with_cache(
+    hass: HomeAssistant, config_entry: MockConfigEntry, cache: tuple
+) -> None:
+    await hass.config.async_set_time_zone("Australia/Melbourne")
+    set_inputs(hass)
+    mock_restore_cache_with_extra_data(hass, cache)
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_values_restored_after_restart_and_flagged(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup_with_cache(
+        hass,
+        config_entry,
+        (
+            _cache(P50, "2057", {"value": 2057, "attributes": {}}),
+            _cache(DETAIL, "heating", {"value": "heating", "attributes": _DETAIL_ATTRS}),
+            _cache(LAST_RUN, _LAST_RUN_AT, {"value": _LAST_RUN_AT, "attributes": {}}),
+        ),
+    )
+
+    assert hass.states.get(P50).state == "2057"
+    detail = hass.states.get(DETAIL)
+    assert detail.state == "heating"
+    assert detail.attributes["p50"]["safe_export"] == 2057
+    assert datetime.fromisoformat(hass.states.get(LAST_RUN).state) == datetime.fromisoformat(
+        _LAST_RUN_AT
+    )
+    # Restored values are marked so a consumer can tell them from a fresh run.
+    for entity_id in (P50, DETAIL, LAST_RUN):
+        assert hass.states.get(entity_id).attributes["restored"] is True, entity_id
+
+    await _press(hass)
+
+    assert hass.states.get(P50).state == "3847"
+    for entity_id in (P50, DETAIL, LAST_RUN):
+        assert hass.states.get(entity_id).attributes["restored"] is False, entity_id
+
+
+async def test_unusable_restored_data_is_ignored(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup_with_cache(
+        hass,
+        config_entry,
+        (
+            _cache(P50, "banana", {"value": "banana", "attributes": {}}),
+            _cache(DETAIL, "volcanic", {"value": "volcanic", "attributes": {}}),
+            _cache(LAST_RUN, "yesterday", {"value": "yesterday", "attributes": {}}),
+        ),
+    )
+    for entity_id in (P50, DETAIL, LAST_RUN):
+        assert hass.states.get(entity_id).state == "unknown", entity_id
 
 
 async def test_run_now_publishes_prediction(

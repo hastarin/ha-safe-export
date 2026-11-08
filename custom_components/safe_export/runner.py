@@ -78,8 +78,8 @@ class SafeExportRunner(DataUpdateCoordinator[RunResult]):
     """Holds the latest run result and notifies the entities when it changes.
 
     There is no polling: a run happens at 18:00, on the button, or on the
-    safe_export.run action. Until the first run after a restart the entities are
-    unknown rather than restoring yesterday's value, so nothing stale is published.
+    safe_export.run action. After a restart the entities restore their last value,
+    flagged `restored: true` until the first run, so consumers can ignore it.
     """
 
     def __init__(

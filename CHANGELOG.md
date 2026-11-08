@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The integration's sensors no longer go `unknown` after every Home Assistant restart.** `sensor.safe_export_p50`, `_detail` and `_last_run` now restore their last value and attributes, and carry a `restored` attribute that is `true` until the next run and `false` after it. Any automation acting on them (the Phase 3 cutover copy automation, #55) must require `restored` to be false so a restart shortly before 18:00 cannot act on the previous night's value. Unusable restored data (a non-integer P50, a zone not in the list, an unparseable timestamp) is ignored and the sensor stays `unknown`. Integration version 1.7.2.
+
 ### Added
 
 - **Integration icon.** `custom_components/safe_export/brand/` holds `icon.png` (256 px) and `icon@2x.png` (512 px), rendered from `icon.svg`: a navy shield with an orange rim around a battery with three charge bars. Home Assistant 2026.3+ serves brand images from this folder for custom integrations, replacing the "icon not available" placeholder.
