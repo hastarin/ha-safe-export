@@ -14,7 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 # Dev/analysis only — not required by the runtime predictor. Used by tools/retrain.py.
 tools = [
-    "numpy>=2.4.6",
+    "numpy>=2.5.4",
 ]
 # Home Assistant integration tests (tests_ha/). The harness pins a Home Assistant
 # release and needs the Python that release needs (3.14 for 2026.10), and HA does
