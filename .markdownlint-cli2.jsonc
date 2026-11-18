@@ -5,7 +5,5 @@
       "siblings_only": true
     }
   },
-  "ignores": [
-    ".venv/**"
-  ]
+  "gitignore": true
 }
