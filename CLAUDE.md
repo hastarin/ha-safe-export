@@ -129,6 +129,7 @@ See `docs/DECISIONS.md` ("model-quality benchmark, not a live-performance predic
 
 - After merging or closing a PR, never push further changes to that branch; apply follow-up edits fresh on `main` and delete the stale branch.
 - Never use heredocs for commit messages; use `-m` flags or a temp file to avoid stray characters leaking in.
+- Put temp files (commit messages, PR bodies for `--body-file`, scratch output) in the session's scratchpad directory, never in `.git/` or the working tree — files there outlive the session and get picked up by repo-wide lint globs.
 
 ## Testing
 
